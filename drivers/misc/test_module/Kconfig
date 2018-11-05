@@ -1,0 +1,5 @@
+config TEST_MODULE
+	tristate 'Randomization Test Module'
+	default m
+	help
+		Very helpful text
