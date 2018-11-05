@@ -47,6 +47,15 @@ export REALMODE_CFLAGS
 # e.g.: obj-y += foo_$(BITS).o
 export BITS
 
+ifdef CONFIG_X86_NEED_RELOCS
+        LDFLAGS_vmlinux := --emit-relocs --discard-none
+endif
+
+ifndef CONFIG_FG_KASLR
+	ifdef CONFIG_MODULE_FG_KASLR
+		KBUILD_CFLAGS_MODULE += -ffunction-sections
+	endif
+endif
 #
 # Prevent GCC from generating any FP code by mistake.
 #

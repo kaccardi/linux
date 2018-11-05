@@ -2023,6 +2023,7 @@ config FG_KASLR
 	bool "Function Granular Kernel Address Space Layout Randomization"
 	depends on $(cc-option, -ffunction-sections)
 	depends on ARCH_HAS_FG_KASLR
+	select MODULE_FG_KASLR
 	default n
 	help
 	  This option improves the randomness of the kernel text
@@ -2306,6 +2307,17 @@ config UNUSED_KSYMS_WHITELIST
 	  set here is the path to a text file containing the list of symbols,
 	  one per line. The path can be absolute, or relative to the kernel
 	  source tree.
+
+config MODULE_FG_KASLR
+	depends on $(cc-option, -ffunction-sections)
+	bool "Module Function Granular Layout Randomization"
+	help
+	  This option randomizes the module text section by reordering the text
+	  section by function at module load time. In order to use this
+	  feature, the module must have been compiled with the
+	  -ffunction-sections compiler flag.
+
+	  If unsure, say N.
 
 endif # MODULES
 
