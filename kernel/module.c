@@ -65,6 +65,7 @@
 #include <linux/dynamic_debug.h>
 #include <linux/audit.h>
 #include <uapi/linux/module.h>
+#include <linux/random.h>
 #include "module-internal.h"
 
 #define CREATE_TRACE_POINTS
@@ -3139,6 +3140,84 @@ static int find_module_sections(struct module *mod, struct load_info *info)
 	return 0;
 }
 
+/*
+ * shuffle_text_list()
+ * Use a Fisher Yates algorithm to shuffle a list of text sections.
+ */
+static void shuffle_text_list(Elf_Shdr **list, int size)
+{
+	int i;
+	unsigned int j;
+	Elf_Shdr *temp;
+
+	for (i = size - 1; i > 0; i--) {
+		/*
+		 * TBD - seed. We need to be able to use a known
+		 * seed so that we can non-randomly randomize for
+		 * debugging.
+		 */
+
+		// pick a random index from 0 to i
+		get_random_bytes(&j, sizeof(j));
+		j = j % (i + 1);
+
+		temp = list[i];
+		list[i] = list[j];
+		list[j] = temp;
+	}
+}
+
+/*
+ * randomize_text()
+ * Look through the core section looking for executable code sections.
+ * Store sections in an array and then shuffle the sections
+ * to reorder the functions.
+ */
+static void randomize_text(struct module *mod, struct load_info *info)
+{
+	int i;
+	int num_text_sections = 0;
+	Elf_Shdr **text_list;
+	int size = 0;
+	int max_sections = info->hdr->e_shnum;
+	unsigned int sec = find_sec(info, ".text");
+
+	if (sec == 0)
+		return;
+
+	text_list = kmalloc(sizeof(*text_list) * max_sections, GFP_KERNEL);
+	if (text_list == NULL)
+		return;
+
+	for (i = 0; i < max_sections; i++) {
+		Elf_Shdr *shdr = &info->sechdrs[i];
+		const char *sname = info->secstrings + shdr->sh_name;
+
+		if (!(shdr->sh_flags & SHF_ALLOC) ||
+		    !(shdr->sh_flags & SHF_EXECINSTR) ||
+		    strstarts(sname, ".init"))
+		    continue;
+
+		text_list[num_text_sections] = shdr;
+		num_text_sections++;
+	}
+
+	shuffle_text_list(text_list, num_text_sections);
+
+	for (i = 0; i < num_text_sections; i++) {
+		Elf_Shdr *shdr = text_list[i];
+		unsigned int infosec;
+		const char *sname;
+
+		sname = info->secstrings + shdr->sh_name;
+		infosec	= shdr->sh_info;
+
+		shdr->sh_entsize = get_offset(mod, &size, shdr, infosec);
+	}
+
+	kfree(text_list);
+}
+
 static int move_module(struct module *mod, struct load_info *info)
 {
 	int i;
@@ -3177,7 +3256,8 @@ static int move_module(struct module *mod, struct load_info *info)
 		mod->init_layout.base = NULL;
 
 	/* Transfer each section which specifies SHF_ALLOC */
-	pr_debug("final section addresses:\n");
+	randomize_text(mod, info);
+
 	for (i = 0; i < info->hdr->e_shnum; i++) {
 		void *dest;
 		Elf_Shdr *shdr = &info->sechdrs[i];
@@ -3195,8 +3275,6 @@ static int move_module(struct module *mod, struct load_info *info)
 			memcpy(dest, (void *)shdr->sh_addr, shdr->sh_size);
 		/* Update sh_addr to point to copy in image. */
 		shdr->sh_addr = (unsigned long)dest;
-		pr_debug("\t0x%lx %s\n",
-			 (long)shdr->sh_addr, info->secstrings + shdr->sh_name);
 	}
 
 	return 0;
