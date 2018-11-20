@@ -17,6 +17,15 @@ blocks:
         commands:
             - echo "Installing build dependencies..."
             - sudo apt-get install -y git flex build-essential fakeroot libncurses5-dev libssl-dev ccache libelf-dev bc
+      - name: test-dependencies
+        commands:
+            - echo "Installing test dependencies..."
+            - sudo apt-get install -y golang
+            - export PATH=$PATH:$(go env GOPATH)/bin
+            - go get github.com/intel/ccloudvm/...
+            - sudo chmod ugo+rwx /dev/kvm
+            - ccloudvm setup
+            - ccloudvm create -debug fedora28
   - name: "Build"
     task:
       env_vars:
