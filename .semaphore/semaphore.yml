@@ -25,7 +25,7 @@ blocks:
             - go get github.com/intel/ccloudvm/...
             - sudo chmod ugo+rwx /dev/kvm
             - ccloudvm setup
-            - ccloudvm create -debug fedora28
+            - ccloudvm create fedora28
   - name: "Build"
     task:
       env_vars:
