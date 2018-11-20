@@ -20,12 +20,15 @@ blocks:
       - name: test-dependencies
         commands:
             - echo "Installing test dependencies..."
+            - git clone https://github.com/kaccardi/testutils.git
             - sudo apt-get install -y golang
             - export PATH=$PATH:$(go env GOPATH)/bin
             - go get github.com/intel/ccloudvm/...
+            - mkdir -p ~/.ccloudvm/workloads
+            - cp testutils/ccloudvm/semaphore.yaml ~/.ccloudvm/workloads
             - ccloudvm setup
             - sudo chmod ugo+rwx /dev/kvm
-            - ccloudvm create fedora28
+            - ccloudvm create semaphore
   - name: "Build"
     task:
       env_vars:
