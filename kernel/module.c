@@ -3266,9 +3266,7 @@ static int move_module(struct module *mod, struct load_info *info)
 
 	/* Transfer each section which specifies SHF_ALLOC */
 	randomize_text(mod, info);
-	printk("final section addresses:\n");
-	printk("init_layout.base 0x%lx\n", mod->init_layout.base);
-	printk("core_layout.base 0x%lx\n", mod->core_layout.base);
+	pr_debug("final section addresses:\n");
 
 	for (i = 0; i < info->hdr->e_shnum; i++) {
 		void *dest;
@@ -3287,7 +3285,7 @@ static int move_module(struct module *mod, struct load_info *info)
 			memcpy(dest, (void *)shdr->sh_addr, shdr->sh_size);
 		/* Update sh_addr to point to copy in image. */
 		shdr->sh_addr = (unsigned long)dest;
-		printk("\t0x%lx %s\n",
+		pr_debug("\t0x%lx %s\n",
 			 (long)shdr->sh_addr, info->secstrings + shdr->sh_name);
 	}
 
