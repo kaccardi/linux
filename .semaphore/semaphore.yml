@@ -16,7 +16,7 @@ blocks:
       - name: install
         commands:
             - echo "Installing build dependencies..."
-            - sudo apt-get install -y git build-essential kernel-package fakeroot libncurses5-dev libssl-dev ccache
+            - sudo apt-get install -y git build-essential fakeroot libncurses5-dev libssl-dev ccache
   - name: "Build"
     task:
       env_vars:
