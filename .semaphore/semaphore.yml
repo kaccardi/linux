@@ -23,8 +23,8 @@ blocks:
             - sudo apt-get install -y golang
             - export PATH=$PATH:$(go env GOPATH)/bin
             - go get github.com/intel/ccloudvm/...
-            - sudo chmod ugo+rwx /dev/kvm
             - ccloudvm setup
+            - sudo chmod ugo+rwx /dev/kvm
             - ccloudvm create fedora28
   - name: "Build"
     task:
