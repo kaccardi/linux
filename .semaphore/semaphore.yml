@@ -41,7 +41,8 @@ blocks:
           - ls -1
           - echo $APP_ENV
           - echo "configure..."
-          - make allyesconfig
-          - make -j `getconf _NPROCESSORS_ONLN` LOCALVERSION=-test
+          - cp /boot/config-`uname -r` .config
+          - make olddefconfig
+          - make -j `getconf _NPROCESSORS_ONLN` deb-pkg LOCALVERSION=-test
           - echo "done"
 
