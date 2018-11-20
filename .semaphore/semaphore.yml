@@ -28,7 +28,8 @@ blocks:
             - cp testutils/ccloudvm/semaphore.yaml ~/.ccloudvm/workloads
             - ccloudvm setup
             - sudo chmod ugo+rwx /dev/kvm
-            - ccloudvm create semaphore
+            - ccloudvm create semaphore --debug --qemuport=9999 &
+            - nc localhost 9999
   - name: "Build"
     task:
       env_vars:
