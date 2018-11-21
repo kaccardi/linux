@@ -16,6 +16,7 @@ blocks:
       - name: install
         commands:
             - echo "Installing build dependencies..."
+            - sudo apt-get -y update
             - sudo apt-get install -y git flex build-essential fakeroot libncurses5-dev libssl-dev ccache libelf-dev bc python3-pip --fix-missing
 
       - name: test-dependencies
