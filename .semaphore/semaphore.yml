@@ -16,20 +16,15 @@ blocks:
       - name: install
         commands:
             - echo "Installing build dependencies..."
-            - sudo apt-get install -y git flex build-essential fakeroot libncurses5-dev libssl-dev ccache libelf-dev bc
+            - sudo apt-get install -y git flex build-essential fakeroot libncurses5-dev libssl-dev ccache libelf-dev bc sudo apt-get python3-pip
+
       - name: test-dependencies
         commands:
             - echo "Installing test dependencies..."
-            - git clone https://github.com/kaccardi/testutils.git
-            - sudo apt-get install -y golang
-            - export PATH=$PATH:$(go env GOPATH)/bin
-            - go get github.com/intel/ccloudvm/...
-            - mkdir -p ~/.ccloudvm/workloads
-            - cp testutils/ccloudvm/semaphore.yaml ~/.ccloudvm/workloads
-            - ccloudvm setup
-            - sudo chmod ugo+rwx /dev/kvm
-            - ccloudvm create semaphore --qemuport=9999 &
-            - nc localhost 9999
+            - git clone https://github.com/ezequielgarcia/virtme.git
+            - cd virtme
+            - pip3 install --user pipenv
+            - sudo ./setup.py install
   - name: "Build"
     task:
       env_vars:
@@ -42,8 +37,7 @@ blocks:
           - ls -1
           - echo $APP_ENV
           - echo "configure..."
-          - cp /boot/config-`uname -r` .config
-          - make olddefconfig
-          - make -j `getconf _NPROCESSORS_ONLN` deb-pkg LOCALVERSION=-test
+          - virtme-configkernel --defconfig
+          - make -j `getconf _NPROCESSORS_ONLN` LOCALVERSION=-test
           - echo "done"
 
