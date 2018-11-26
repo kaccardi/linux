@@ -6,25 +6,28 @@ agent:
     os_image: ubuntu1804
 
 blocks:
-  - name: "Prepare"
+  - name: "Install dependencies"
     task:
-      jobs:
-      - name: update
-        commands:
-            - echo "Updating build environment..."
-            - sudo apt-get -y update
-      - name: install
-        commands:
-            - echo "Installing build dependencies..."
-            - sudo apt-get -y update
-            - sudo apt-get install -y git flex build-essential fakeroot libncurses5-dev libssl-dev ccache libelf-dev bc python3-pip --fix-missing
+        jobs:
+          - name: ubuntu update
+            commands:
+              - checkout
+              - cache restore node-modules-$(checksum package-lock.json)
+              - sudo apt-get -y update
+              - sudo apt-get install -y git flex build-essential fakeroot libncurses5-dev libssl-dev ccache libelf-dev bc python3-pip --fix-missing
+              - cache store node-modules-$(checksum package-lock.json) node_modules
+
+  - name: "Build"
+    task:
+      prologue:
+          commands:
+            - checkout
+            - cache restore node-modules-$(checksum package-lock.json)
             - echo "Installing test dependencies..."
             - git clone https://github.com/ezequielgarcia/virtme.git
             - cd virtme
             - pip3 install --user pipenv
             - sudo ./setup.py install
-  - name: "Build"
-    task:
       env_vars:
         - name: APP_ENV
           value: prod
