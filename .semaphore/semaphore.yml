@@ -6,23 +6,14 @@ agent:
     os_image: ubuntu1804
 
 blocks:
-  - name: "Install dependencies"
-    task:
-        jobs:
-          - name: ubuntu update
-            commands:
-              - checkout
-              - cache restore node-modules-$(checksum package-lock.json)
-              - sudo apt-get -y update
-              - sudo apt-get install -y git flex build-essential fakeroot libncurses5-dev libssl-dev ccache libelf-dev bc python3-pip --fix-missing
-              - cache store node-modules-$(checksum package-lock.json) node_modules
-
   - name: "Build"
     task:
       prologue:
           commands:
             - checkout
-            - cache restore node-modules-$(checksum package-lock.json)
+            - echo "Updating Ubuntu package dependencies..."
+            - sudo apt-get -y update
+            - sudo apt-get install -y git flex build-essential fakeroot libncurses5-dev libssl-dev ccache libelf-dev bc python3-pip --fix-missing
             - echo "Installing test dependencies..."
             - git clone https://github.com/ezequielgarcia/virtme.git
             - cd virtme
