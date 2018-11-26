@@ -31,5 +31,6 @@ blocks:
           - echo "configure..."
           - virtme-configkernel --defconfig
           - make -j `getconf _NPROCESSORS_ONLN` LOCALVERSION=-test
+          - sudo virtme-run --kimg arch/x86_64/boot/bzImage
           - echo "done"
 
