@@ -28,8 +28,7 @@ blocks:
             - go install ./...
             - popd
             - ccloudvm setup
-            - ccloudvm create kernel --qemuport=9999 &
-            - nc localhost 9999
+            - ccloudvm create kernel --qemuport=9999
 
       env_vars:
         - name: APP_ENV
