@@ -13,12 +13,23 @@ blocks:
             - checkout
             - echo "Updating Ubuntu package dependencies..."
             - sudo apt-get -y update
-            - sudo apt-get install -y git flex build-essential fakeroot libncurses5-dev libssl-dev ccache libelf-dev bc python3-pip qemu-kvm qemu --fix-missing
+            - sudo apt-get install -y git flex build-essential fakeroot libncurses5-dev libssl-dev ccache libelf-dev bc python3-pip qemu-kvm qemu golang --fix-missing
             - echo "Installing test dependencies..."
-            - git clone https://github.com/ezequielgarcia/virtme.git
-            - cd virtme
-            - pip3 install --user pipenv
-            - sudo ./setup.py install
+            - git clone https://github.com/kaccardi/testutils
+            - mkdir -p ~/.ccloudvm/workloads
+            - cp testutils/ccloudvm/kernel.yaml ~/.ccloudvm/workloads
+            - export PATH=$PATH:$(go env GOPATH)/bin
+            - go get github.com/kaccardi/ccloudvm/...
+            - pushd $(go env GOPATH)/src/github.com/intel
+            - mv ccloudvm ccloudvm.orig
+            - ln -s ../kaccardi/ccloudvm ccloudvm
+            - cd ccloudvm
+            - go install ./...
+            - popd
+            - ccloudvm setup
+            - ccloudvm create kernel --qemuport=9999 &
+            - nc localhost 9999
+
       env_vars:
         - name: APP_ENV
           value: prod
@@ -29,8 +40,7 @@ blocks:
           - ls -1
           - echo $APP_ENV
           - echo "configure..."
-          - virtme-configkernel --defconfig
+          - make olddefconfig
           - make -j `getconf _NPROCESSORS_ONLN` LOCALVERSION=-test
-          - sudo virtme-run --kimg arch/x86_64/boot/bzImage
           - echo "done"
 
