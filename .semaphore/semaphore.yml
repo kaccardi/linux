@@ -24,6 +24,7 @@ blocks:
             - mv ccloudvm ccloudvm.orig
             - ln -s ../kaccardi/ccloudvm ccloudvm
             - cd ccloudvm
+            - git checkout origin/disable-kvm
             - go install ./...
             - popd
             - ccloudvm setup
