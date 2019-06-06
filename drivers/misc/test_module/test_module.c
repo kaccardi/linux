@@ -13,6 +13,7 @@ MODULE_VERSION("0.01");
 static struct workqueue_struct *test_module_wq;
 static struct work_struct work;
 static int counter;
+DEFINE_PER_CPU(int, per_cpu_var);
 
 static void __attribute__((optimize("O0"))) test_module_do_work(void)
 {
@@ -34,6 +35,11 @@ static void __attribute__((optimize("O0"))) test_module_do_work(void)
 	 * create reloc which is relative offset to .bss
 	 */
 	counter++;
+
+	/*
+	 * create a reloc which references the per cpu section.
+	 */
+	this_cpu_inc(per_cpu_var);
 
 	/*
 	 * create reloc of type R_X86_64_PLT32
