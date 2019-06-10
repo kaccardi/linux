@@ -76,6 +76,10 @@ static int lines, cols;
 #ifdef CONFIG_KERNEL_LZ4
 #include "../../../../lib/decompress_unlz4.c"
 #endif
+
+static unsigned long percpu_start;
+static unsigned long percpu_end;
+
 /*
  * NOTE: When adding a new decompressor, please update the analysis in
  * ../header.S.
@@ -170,6 +174,21 @@ void __puthex(unsigned long value)
 	}
 }
 
+static bool is_percpu_addr(long pc, long offset)
+{
+	unsigned long ptr;
+	long address;
+
+	address = pc + offset + 4;
+
+	ptr = (unsigned long) address;
+
+	if (ptr >= percpu_start && ptr < percpu_end)
+		return true;
+
+	return false;
+}
+
 /* called with unmodified address */
 static bool address_in_section(long address, Elf64_Shdr *s)
 {
@@ -233,8 +252,8 @@ static void adjust_relative_offset(long pc, long *value, Elf64_Shdr *section, El
 	 */
 	if (section != NULL)
 		*value -= section->sh_offset;
-}
 
+}
 
 #if CONFIG_X86_NEED_RELOCS
 /*
@@ -272,12 +291,10 @@ static void handle_relocations(void *output, unsigned long output_len,
 	if (IS_ENABLED(CONFIG_X86_64))
 		delta = virt_addr - LOAD_PHYSICAL_ADDR;
 
-#ifdef KRISTEN_DEBUG
 	if (!delta) {
 		debug_putstr("No relocation needed... ");
 		return;
 	}
-#endif
 	debug_putstr("\nPerforming relocations... ");
 
 	/*
@@ -323,6 +340,7 @@ static void handle_relocations(void *output, unsigned long output_len,
 	while (*--reloc) {
 		long extended = *reloc;
 		long value;
+		long oldvalue;
 		Elf64_Shdr *s;
 
 		s = adjust_address(&extended, sections);
@@ -334,10 +352,18 @@ static void handle_relocations(void *output, unsigned long output_len,
 			error("inverse 32-bit relocation outside of kernel!\n");
 
 		value = *(int32_t *)ptr;
+		oldvalue = value;
 
 		adjust_relative_offset(*reloc, &value, s, sections);
 
-		value -= delta;
+		/*
+		 * only percpu symbols need to have their values adjusted for kaslr
+		 * since relative offsets within the .text and .text.* sections
+		 * are ok wrt each other.
+		 */
+		if (is_percpu_addr(*reloc, oldvalue)) {
+			value -= delta;
+		}
 
 		*(int32_t *)ptr = value;
 	}
@@ -450,6 +476,7 @@ static Elf64_Shdr ** parse_elf(void *output)
 	Elf64_Shdr *sechdrs;
 	Elf64_Shdr *s;
 	Elf64_Shdr *text = NULL;
+	Elf64_Shdr *percpu = NULL;
 	char *secstrings;
 	int rand_text_size = 0;
 	const char *sname;
@@ -500,6 +527,11 @@ static Elf64_Shdr ** parse_elf(void *output)
 			continue;
 		}
 
+		if (!strcmp(sname, ".data..percpu")) {
+			/* get start addr for later */
+			percpu = s;
+		}
+
 		if (!(s->sh_flags & SHF_ALLOC) ||
 		    !(s->sh_flags & SHF_EXECINSTR) ||
 		    !(strstarts(sname, ".text")))
@@ -532,11 +564,15 @@ static Elf64_Shdr ** parse_elf(void *output)
 #else
 			dest = (void *)(phdr->p_paddr);
 #endif
-			if (phdr->p_offset == text->sh_offset) {
+			if (text && (phdr->p_offset == text->sh_offset)) {
 				move_text(sections, num_sections, secstrings,
 					  text, rand_text_size, output, dest,
 					  phdr);
 			} else {
+				if (percpu && (phdr->p_offset == percpu->sh_offset)) {
+					percpu_start = percpu->sh_addr;
+					percpu_end = percpu_start + phdr->p_filesz;
+				}
 				memmove(dest, output + phdr->p_offset,
 					phdr->p_filesz);
 			}
@@ -624,12 +660,10 @@ asmlinkage __visible void *extract_kernel(void *rmode, memptr heap,
 	 * the entire decompressed kernel plus relocation table, or the
 	 * entire decompressed kernel plus .bss and .brk sections.
 	 */
-#ifdef KRISTEN_DEBUG
 	choose_random_location((unsigned long)input_data, input_len,
 				(unsigned long *)&output,
 				max(output_len, kernel_total_size),
 				&virt_addr);
-#endif
 
 	/* Validate memory location choices. */
 	if ((unsigned long)output & (MIN_KERNEL_ALIGN - 1))
