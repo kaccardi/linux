@@ -140,8 +140,11 @@ static void __attribute__((optimize("O0"))) test_module_wq_func(struct work_stru
 	 */
 	if (running && counter < 5)
 		queue_work(test_module_wq, w);
-	else
+	else {
 		pr_info("%s: ending wq\n", __func__);
+		WARN(1, "Triggering to make sure exceptions work...\n");
+		pr_info("If you see this, WARN() returned correctly.\n");
+	}
 	return;
 }
 
