@@ -20,6 +20,52 @@ static int counter;
 static bool running = 1;
 DEFINE_PER_CPU(int, per_cpu_var);
 
+#define DEFINE_NUMFUNC(num)					\
+static void noinline test_module_ ## num(void)			\
+{								\
+	pr_info("%s:%px\n", __func__, test_module_ ## num);	\
+}
+#define REPORT_NUMFUNC(num)					\
+        pr_info("test_module_" #num ": %ld\n",			\
+		(uintptr_t)test_module_report -			\
+		(uintptr_t)test_module_ ## num)
+
+#define EXPAND_100(expand)		\
+	EXPAND_ONES(expand, 0);		\
+	EXPAND_ONES(expand, 1);		\
+	EXPAND_ONES(expand, 2);		\
+	EXPAND_ONES(expand, 3);		\
+	EXPAND_ONES(expand, 4);		\
+	EXPAND_ONES(expand, 5);		\
+	EXPAND_ONES(expand, 6);		\
+	EXPAND_ONES(expand, 7);		\
+	EXPAND_ONES(expand, 8);		\
+	EXPAND_ONES(expand, 9);		\
+
+#define EXPAND_ONES(expand, tens)	\
+	expand ## _NUMFUNC(tens ## 0);	\
+	expand ## _NUMFUNC(tens ## 1);	\
+	expand ## _NUMFUNC(tens ## 2);	\
+	expand ## _NUMFUNC(tens ## 3);	\
+	expand ## _NUMFUNC(tens ## 4);	\
+	expand ## _NUMFUNC(tens ## 5);	\
+	expand ## _NUMFUNC(tens ## 6);	\
+	expand ## _NUMFUNC(tens ## 7);	\
+	expand ## _NUMFUNC(tens ## 8);	\
+	expand ## _NUMFUNC(tens ## 9);	\
+
+EXPAND_100(DEFINE);
+
+static void noinline test_module_report(void)
+{
+	/*
+	 * Report on function relative locations. This would be static
+	 * for multiple reloads on a non-FGKASLR build, and change for
+	 * FGKASLR.
+	 */
+	EXPAND_100(REPORT);
+}
+
 static void __attribute__((optimize("O0"))) test_module_do_work(void)
 {
 	phys_addr_t phys;
@@ -104,6 +150,8 @@ static int __init test_module_init(void)
 	int ret;
 
 	pr_info("%s\n", __func__);
+
+	test_module_report();
 
 	/*
 	 * this call will create a reloc of type R_X86_64_PC32
