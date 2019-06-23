@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
+#define pr_fmt(fmt) "fgkaslr: " fmt
+
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -31,7 +33,7 @@ static void __attribute__((optimize("O0"))) test_module_do_work(void)
 	/*
 	 * create reloc for relative offset to routine in non-randomized section
 	 */
-	printk("%s %p %p\n", __FUNCTION__, test_module_do_work, phys);
+	pr_info("%s:%px phys:%llx\n", __func__, test_module_do_work, phys);
 
 	/*
 	 * create reloc which is relative offset to .bss
@@ -67,7 +69,7 @@ static void __attribute__((optimize("O0"))) test_module_wq_func(struct work_stru
 	 * .rodata section, which requires just a direct address
 	 * substitution for our new randomized location.
 	 */
-	printk("%s: enter\n", __FUNCTION__);
+	pr_info("%s: enter\n", __func__);
 
 	/*
 	 * here we access .bss - and this creates a reloc of type R_X86_64_PC32
@@ -97,6 +99,8 @@ static int __init test_module_init(void)
 {
 	int ret;
 
+	pr_info("%s\n", __func__);
+
 	/*
 	 * this call will create a reloc of type R_X86_64_PC32
 	 * to this function from the .init section to a section
@@ -115,8 +119,6 @@ static int __init test_module_init(void)
 		ret = queue_work(test_module_wq, &work);
 	}
 
-	printk(KERN_INFO "test_module_init\n");
-
 	return 0;
 }
 
@@ -124,7 +126,7 @@ static void __exit test_module_exit(void)
 {
 	flush_workqueue(test_module_wq);
 	destroy_workqueue(test_module_wq);
-	printk(KERN_INFO "test_module_exit\n");
+	pr_info("%s\n", __func__);
 }
 
 module_init(test_module_init);
