@@ -27,7 +27,7 @@
 #ifdef CONFIG_KERNEL_BZIP2
 # define BOOT_HEAP_SIZE		0x400000
 #else /* !CONFIG_KERNEL_BZIP2 */
-# define BOOT_HEAP_SIZE		 0x10000
+# define BOOT_HEAP_SIZE		 0x100000
 #endif
 
 #ifdef CONFIG_X86_64

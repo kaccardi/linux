@@ -437,15 +437,20 @@ static void move_text(Elf64_Shdr **sections, int num_sections, char *secstrings,
 	for (j = 0; j < num_sections; j++) {
 		Elf64_Shdr *s = sections[j];
 		sname = secstrings + s->sh_name;
+
+		/*
 		debug_putstr("\n");
 		debug_putstr(sname);
 		debug_putstr(":orig addr ");
 		debug_puthex(s->sh_addr);
+		*/
 
 		adjusted_offset = adjusted_addr - s->sh_addr;
 
+		/*
 		debug_putstr(" new addr: ");
 		debug_puthex(s->sh_addr + adjusted_offset);
+		*/
 
 		memmove(fakeout, output + s->sh_offset, s->sh_size);
 		fakeout += s->sh_size;
