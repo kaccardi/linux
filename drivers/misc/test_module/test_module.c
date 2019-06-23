@@ -17,6 +17,7 @@ MODULE_VERSION("0.01");
 static struct workqueue_struct *test_module_wq;
 static struct work_struct work;
 static int counter;
+static bool running = 1;
 DEFINE_PER_CPU(int, per_cpu_var);
 
 static void __attribute__((optimize("O0"))) test_module_do_work(void)
@@ -48,7 +49,7 @@ static void __attribute__((optimize("O0"))) test_module_do_work(void)
 	/*
 	 * create reloc of type R_X86_64_PLT32
 	 */
-	msleep(10000);
+	msleep(100);
 }
 
 static void __attribute__((optimize("O0"))) test_module_wq_func(struct work_struct *w)
@@ -81,7 +82,7 @@ static void __attribute__((optimize("O0"))) test_module_wq_func(struct work_stru
 	/*
 	 * this is just a second R_X86_64_PLT32 entry
 	 */
-	msleep(10000);
+	msleep(100);
 
 	/*
 	 * this is another R_X86_64_PLT32 entry - however, since queue_work()
@@ -91,7 +92,10 @@ static void __attribute__((optimize("O0"))) test_module_wq_func(struct work_stru
 	 * both queue_work() and test_module_wq_func(). This call also
 	 * accesses .bss, which creates another R_X86_64_PC32 entry.
 	 */
-	queue_work(test_module_wq, w);
+	if (running && counter < 5)
+		queue_work(test_module_wq, w);
+	else
+		pr_info("%s: ending wq\n", __func__);
 	return;
 }
 
@@ -124,6 +128,7 @@ static int __init test_module_init(void)
 
 static void __exit test_module_exit(void)
 {
+	running = 0;
 	flush_workqueue(test_module_wq);
 	destroy_workqueue(test_module_wq);
 	pr_info("%s\n", __func__);
