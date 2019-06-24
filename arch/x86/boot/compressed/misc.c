@@ -409,7 +409,7 @@ static void shuffle_sections(Elf64_Shdr **list, int size)
 		 */
 
 		// pick a random index from 0 to i
-		j = kaslr_get_random_long(NULL) % (i + 1);
+		j = kaslr_get_prandom_long() % (i + 1);
 
 		temp = list[i];
 		list[i] = list[j];
