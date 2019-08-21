@@ -409,7 +409,7 @@ static void shuffle_sections(Elf64_Shdr **list, int size)
 		 */
 
 		// pick a random index from 0 to i
-		j = kaslr_get_random_long("Shuffle") % (i + 1);
+		j = kaslr_get_prandom_long() % (i + 1);
 
 		temp = list[i];
 		list[i] = list[j];
@@ -437,15 +437,20 @@ static void move_text(Elf64_Shdr **sections, int num_sections, char *secstrings,
 	for (j = 0; j < num_sections; j++) {
 		Elf64_Shdr *s = sections[j];
 		sname = secstrings + s->sh_name;
+
+		/*
 		debug_putstr("\n");
 		debug_putstr(sname);
 		debug_putstr(":orig addr ");
 		debug_puthex(s->sh_addr);
+		*/
 
 		adjusted_offset = adjusted_addr - s->sh_addr;
 
+		/*
 		debug_putstr(" new addr: ");
 		debug_puthex(s->sh_addr + adjusted_offset);
+		*/
 
 		memmove(fakeout, output + s->sh_offset, s->sh_size);
 		fakeout += s->sh_size;

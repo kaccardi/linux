@@ -558,7 +558,7 @@ static unsigned long slots_fetch_random(void)
 	if (slot_max == 0)
 		return 0;
 
-	slot = kaslr_get_random_long("Physical") % slot_max;
+	slot = kaslr_get_random_seed("Physical") % slot_max;
 
 	for (i = 0; i < slot_area_index; i++) {
 		if (slot >= slot_areas[i].num) {
@@ -836,7 +836,7 @@ static unsigned long find_random_virt_addr(unsigned long minimum,
 	slots = (KERNEL_IMAGE_SIZE - minimum - image_size) /
 		 CONFIG_PHYSICAL_ALIGN + 1;
 
-	random_addr = kaslr_get_random_long("Virtual") % slots;
+	random_addr = kaslr_get_random_seed("Virtual") % slots;
 
 	return random_addr * CONFIG_PHYSICAL_ALIGN + minimum;
 }

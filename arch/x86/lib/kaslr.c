@@ -46,7 +46,7 @@ static inline u16 i8254(void)
 	return timer;
 }
 
-unsigned long kaslr_get_random_long(const char *purpose)
+unsigned long kaslr_get_random_seed(const char *purpose)
 {
 #ifdef CONFIG_X86_64
 	const unsigned long mix_const = 0x5d6008cbf3848dd3UL;
@@ -56,11 +56,14 @@ unsigned long kaslr_get_random_long(const char *purpose)
 	unsigned long raw, random = get_boot_seed();
 	bool use_i8254 = true;
 
-	debug_putstr(purpose);
-	debug_putstr(" KASLR using");
+	if (purpose) {
+		debug_putstr(purpose);
+		debug_putstr(" KASLR using");
+	}
 
 	if (has_cpuflag(X86_FEATURE_RDRAND)) {
-		debug_putstr(" RDRAND");
+		if (purpose)
+			debug_putstr(" RDRAND");
 		if (rdrand_long(&raw)) {
 			random ^= raw;
 			use_i8254 = false;
@@ -68,7 +71,8 @@ unsigned long kaslr_get_random_long(const char *purpose)
 	}
 
 	if (has_cpuflag(X86_FEATURE_TSC)) {
-		debug_putstr(" RDTSC");
+		if (purpose)
+			debug_putstr(" RDTSC");
 		raw = rdtsc();
 
 		random ^= raw;
@@ -76,7 +80,8 @@ unsigned long kaslr_get_random_long(const char *purpose)
 	}
 
 	if (use_i8254) {
-		debug_putstr(" i8254");
+		if (purpose)
+			debug_putstr(" i8254");
 		random ^= i8254();
 	}
 
@@ -86,7 +91,52 @@ unsigned long kaslr_get_random_long(const char *purpose)
 	    : "a" (random), "rm" (mix_const));
 	random += raw;
 
-	debug_putstr("...\n");
+	if (purpose)
+		debug_putstr("...\n");
 
 	return random;
+}
+
+/*
+ * 64bit variant of Bob Jenkins' public domain PRNG
+ * 256 bits of internal state
+ */
+struct prng_state {
+	u64 a, b, c, d;
+};
+
+static struct prng_state state;
+static bool initialized;
+
+#define rot(x, k) (((x)<<(k))|((x)>>(64-(k))))
+static u64 prng_u64(struct prng_state *x) {
+	u64 e = x->a - rot(x->b, 7);
+	x->a = x->b ^ rot(x->c, 13);
+	x->b = x->c + rot(x->d, 37);
+	x->c = x->d + e;
+	x->d = e + x->a;
+
+	return x->d;
+}
+
+static void prng_init(struct prng_state *state) {
+	int i;
+
+	state->a = kaslr_get_random_seed(NULL);
+	state->b = kaslr_get_random_seed(NULL);
+	state->c = kaslr_get_random_seed(NULL);
+	state->d = kaslr_get_random_seed(NULL);
+
+	for (i=0; i < 30; ++i)
+		(void)prng_u64(state);
+
+	initialized = true;
+}
+
+unsigned long kaslr_get_prandom_long(void)
+{
+	if (!initialized)
+		prng_init(&state);
+
+	return prng_u64(&state);
 }

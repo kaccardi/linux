@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
+
+#define pr_fmt(fmt) "fgkaslr: " fmt
+
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -13,7 +17,54 @@ MODULE_VERSION("0.01");
 static struct workqueue_struct *test_module_wq;
 static struct work_struct work;
 static int counter;
+static bool running = 1;
 DEFINE_PER_CPU(int, per_cpu_var);
+
+#define DEFINE_NUMFUNC(num)					\
+static void noinline test_module_ ## num(void)			\
+{								\
+	pr_info("%s:%px\n", __func__, test_module_ ## num);	\
+}
+#define REPORT_NUMFUNC(num)					\
+        pr_info("test_module_" #num ": %ld\n",			\
+		(uintptr_t)test_module_report -			\
+		(uintptr_t)test_module_ ## num)
+
+#define EXPAND_100(expand)		\
+	EXPAND_ONES(expand, 0);		\
+	EXPAND_ONES(expand, 1);		\
+	EXPAND_ONES(expand, 2);		\
+	EXPAND_ONES(expand, 3);		\
+	EXPAND_ONES(expand, 4);		\
+	EXPAND_ONES(expand, 5);		\
+	EXPAND_ONES(expand, 6);		\
+	EXPAND_ONES(expand, 7);		\
+	EXPAND_ONES(expand, 8);		\
+	EXPAND_ONES(expand, 9);		\
+
+#define EXPAND_ONES(expand, tens)	\
+	expand ## _NUMFUNC(tens ## 0);	\
+	expand ## _NUMFUNC(tens ## 1);	\
+	expand ## _NUMFUNC(tens ## 2);	\
+	expand ## _NUMFUNC(tens ## 3);	\
+	expand ## _NUMFUNC(tens ## 4);	\
+	expand ## _NUMFUNC(tens ## 5);	\
+	expand ## _NUMFUNC(tens ## 6);	\
+	expand ## _NUMFUNC(tens ## 7);	\
+	expand ## _NUMFUNC(tens ## 8);	\
+	expand ## _NUMFUNC(tens ## 9);	\
+
+EXPAND_100(DEFINE);
+
+static void noinline test_module_report(void)
+{
+	/*
+	 * Report on function relative locations. This would be static
+	 * for multiple reloads on a non-FGKASLR build, and change for
+	 * FGKASLR.
+	 */
+	EXPAND_100(REPORT);
+}
 
 static void __attribute__((optimize("O0"))) test_module_do_work(void)
 {
@@ -29,7 +80,7 @@ static void __attribute__((optimize("O0"))) test_module_do_work(void)
 	/*
 	 * create reloc for relative offset to routine in non-randomized section
 	 */
-	printk("%s %p %p\n", __FUNCTION__, test_module_do_work, phys);
+	pr_info("%s:%px phys:%llx\n", __func__, test_module_do_work, phys);
 
 	/*
 	 * create reloc which is relative offset to .bss
@@ -44,7 +95,7 @@ static void __attribute__((optimize("O0"))) test_module_do_work(void)
 	/*
 	 * create reloc of type R_X86_64_PLT32
 	 */
-	msleep(10000);
+	msleep(100);
 }
 
 static void __attribute__((optimize("O0"))) test_module_wq_func(struct work_struct *w)
@@ -65,7 +116,7 @@ static void __attribute__((optimize("O0"))) test_module_wq_func(struct work_stru
 	 * .rodata section, which requires just a direct address
 	 * substitution for our new randomized location.
 	 */
-	printk("%s: enter\n", __FUNCTION__);
+	pr_info("%s: enter\n", __func__);
 
 	/*
 	 * here we access .bss - and this creates a reloc of type R_X86_64_PC32
@@ -77,7 +128,7 @@ static void __attribute__((optimize("O0"))) test_module_wq_func(struct work_stru
 	/*
 	 * this is just a second R_X86_64_PLT32 entry
 	 */
-	msleep(10000);
+	msleep(100);
 
 	/*
 	 * this is another R_X86_64_PLT32 entry - however, since queue_work()
@@ -87,13 +138,23 @@ static void __attribute__((optimize("O0"))) test_module_wq_func(struct work_stru
 	 * both queue_work() and test_module_wq_func(). This call also
 	 * accesses .bss, which creates another R_X86_64_PC32 entry.
 	 */
-	queue_work(test_module_wq, w);
+	if (running && counter < 5)
+		queue_work(test_module_wq, w);
+	else {
+		pr_info("%s: ending wq\n", __func__);
+		WARN(1, "Triggering to make sure exceptions work...\n");
+		pr_info("If you see this, WARN() returned correctly.\n");
+	}
 	return;
 }
 
 static int __init test_module_init(void)
 {
 	int ret;
+
+	pr_info("%s\n", __func__);
+
+	test_module_report();
 
 	/*
 	 * this call will create a reloc of type R_X86_64_PC32
@@ -113,16 +174,15 @@ static int __init test_module_init(void)
 		ret = queue_work(test_module_wq, &work);
 	}
 
-	printk(KERN_INFO "test_module_init\n");
-
 	return 0;
 }
 
 static void __exit test_module_exit(void)
 {
+	running = 0;
 	flush_workqueue(test_module_wq);
 	destroy_workqueue(test_module_wq);
-	printk(KERN_INFO "test_module_exit\n");
+	pr_info("%s\n", __func__);
 }
 
 module_init(test_module_init);
