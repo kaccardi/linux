@@ -4,6 +4,7 @@
 
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/kallsyms.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
@@ -148,6 +149,26 @@ static void __attribute__((optimize("O0"))) test_module_wq_func(struct work_stru
 	return;
 }
 
+static void test_module_test_kallsyms(void)
+{
+	unsigned long expected, result;
+	char buffer[128];
+	int bytes;
+
+	expected = (unsigned long) test_module_do_work;
+
+	result = kallsyms_lookup_name("test_module_do_work");
+
+	pr_info("testing kallsyms_lookup_name...");
+	if (expected != result)
+		pr_info("Failed kallsyms_lookup_name: expected %lx, got %lx", expected, result);
+
+	pr_info("testing sprint_symbol...");
+	bytes = sprint_symbol(buffer, expected);
+	if (bytes != strlen("test_module_do_work") && !strcmp("test_module_do_work", buffer))
+		pr_info("Failed sprint_symbol test: %s\n", buffer);
+}
+
 static int __init test_module_init(void)
 {
 	int ret;
@@ -162,6 +183,8 @@ static int __init test_module_init(void)
 	 * that was randomized.
 	 */
 	test_module_do_work();
+
+	test_module_test_kallsyms();
 
 	/*
 	 * here we are adding the address of a function that has

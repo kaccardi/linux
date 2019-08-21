@@ -17,6 +17,7 @@
 #include "pgtable.h"
 #include "../string.h"
 #include "../voffset.h"
+#include <linux/sort.h>
 
 /*
  * WARNING!!
@@ -79,6 +80,24 @@ static int lines, cols;
 
 static unsigned long percpu_start;
 static unsigned long percpu_end;
+
+static u8 *kallsyms_names;
+static int *kallsyms_offsets;
+static unsigned int *kallsyms_num_syms;
+static long kallsyms_relative_base;
+static unsigned int *kallsyms_markers;
+
+/* addresses in mapped address space */
+static int *base;
+static u8 *names;
+static unsigned long relative_base;
+static unsigned int *markers_addr;
+
+struct kallsyms_name {
+	u8 len;
+	u8 indecis[256];
+};
+struct kallsyms_name *names_table;
 
 /*
  * NOTE: When adding a new decompressor, please update the analysis in
@@ -253,6 +272,215 @@ static void adjust_relative_offset(long pc, long *value, Elf64_Shdr *section, El
 	if (section != NULL)
 		*value -= section->sh_offset;
 
+}
+
+static void kallsyms_swp(void *a, void *b, int size)
+{
+	int idx1, idx2;
+	int temp;
+	struct kallsyms_name name_a;
+
+	/* determine our index into the array */
+	idx1 = (int *)a - base;
+	idx2 = (int *)b - base;
+	temp = base[idx1];
+	base[idx1] = base[idx2];
+	base[idx2] = temp;
+
+	/* also swap the names table */
+	memcpy(&name_a, &names_table[idx1], sizeof(name_a));
+	memcpy(&names_table[idx1], &names_table[idx2], sizeof(struct kallsyms_name));
+	memcpy(&names_table[idx2], &name_a, sizeof(struct kallsyms_name));
+}
+
+static int kallsyms_cmp(const void *a, const void *b)
+{
+	int addr_a, addr_b;
+	unsigned long uaddr_a, uaddr_b;
+
+	addr_a = *(int *)a;
+	addr_b = *(int *)b;
+
+	if (addr_a >= 0)
+		uaddr_a = addr_a;
+	if (addr_b >= 0)
+		uaddr_b = addr_b;
+
+	if (addr_a < 0)
+		uaddr_a = relative_base - 1 - addr_a;
+	if (addr_b < 0)
+		uaddr_b = relative_base - 1 - addr_b;
+
+	if (uaddr_b > uaddr_a)
+		return -1;
+
+	return 0;
+}
+
+static void deal_with_names(int num_syms)
+{
+	int num_bytes;
+	int i, j;
+	int offset;
+
+
+	/* we should have num_syms kallsyms_name entries */
+	num_bytes = num_syms * sizeof(*names_table);
+	names_table = malloc(num_syms * sizeof(*names_table));
+	if (names_table == NULL) {
+		error("\nunable to allocate space for names table\n");
+	}
+
+	/* read all the names entries */
+	offset = 0;
+	for (i = 0; i < num_syms; i++) {
+		names_table[i].len = names[offset];
+		offset++;
+		for (j = 0; j < names_table[i].len; j++) {
+			names_table[i].indecis[j] = names[offset];
+			offset++;
+		}
+	}
+}
+
+static void write_sorted_names(int num_syms)
+{
+	int i, j;
+	int offset = 0;
+	unsigned int *markers;
+
+	/*
+	 * we are going to need to regenerate the markers table, which is a
+	 * table of offsets into the compressed stream every 256 symbols.
+	 * this code copied almost directly from scripts/kallsyms.c
+	 */
+	markers = malloc(sizeof(unsigned int) * ((num_syms + 255) / 256));
+	if (!markers) {
+		debug_putstr("\nfailed to allocate heap space of ");
+		debug_puthex(((num_syms + 255) / 256));
+		debug_putstr(" bytes\n");
+		error("Unable to allocate space for markers table");
+	}
+
+	for (i = 0; i < num_syms; i++) {
+		if ((i & 0xFF) == 0)
+			markers[i >> 8] = offset;
+
+		names[offset] = (u8) names_table[i].len;
+		offset++;
+		for (j = 0; j < names_table[i].len; j++) {
+			names[offset] = (u8) names_table[i].indecis[j];
+			offset++;
+		}
+	}
+
+	/* write new markers table over old one */
+	for (i = 0; i < ((num_syms + 255) >> 8); i++)
+		markers_addr[i] = markers[i];
+
+	free(markers);
+	free(names_table);
+}
+
+static void sort_kallsyms(void *output, Elf64_Shdr **sections)
+{
+	unsigned long delta, map, ptr;
+	unsigned long min_addr = (unsigned long)output;
+	long extended;
+	int num_syms;
+	int i;
+
+	/*
+	 * we have to figure out where in the self map our kallsyms
+	 * info is located.
+	 */
+
+	/* first adjust original address if it was randomized. */
+	extended = (long) kallsyms_num_syms;
+
+	/*
+	 * Calculate the delta between where vmlinux was linked to load
+	 * and where it was actually loaded.
+	 */
+	delta = min_addr - LOAD_PHYSICAL_ADDR;
+
+	/*
+	 * We are currently working in the self map. So we need to
+	 * create an adjustment for kernel memory addresses to the self map.
+	 * This will involve subtracting out the base address of the kernel.
+	 */
+	map = delta - __START_KERNEL_map;
+
+	/*
+	 * add the map value to the various kallsyms symbols so we can read
+	 * their values and update in place if needed.
+	 */
+	extended += map;
+	ptr = (unsigned long)extended;
+	num_syms = *(int *)ptr;
+
+	extended = (long) kallsyms_offsets;
+	extended += map;
+	base = (int *)extended;
+
+	extended = kallsyms_relative_base;
+	extended += map;
+	ptr = (unsigned long)extended;
+	relative_base = *(unsigned long *)ptr;
+
+	extended = (long) kallsyms_markers;
+	extended += map;
+	markers_addr = (unsigned int *)extended;
+
+	/*
+	 * the kallsyms table was generated prior to any randomization.
+	 * it is a bunch of offsets from "relative base". In order for
+	 * us to check if a symbol has an address that was in a randomized
+	 * section, we need to reconstruct the address to it's original
+	 * value prior to handle_relocations.
+	 */
+	for (i = 0; i < num_syms; i++) {
+		unsigned long addr, orig;
+		int new_base;
+
+		/*
+		 * according to kernel/kallsyms.c, positive offsets are absolute
+		 * values and negative offsets are relative to the base.
+		 *
+		 * TBD: I think we can just continue if positive value
+		 *      since that would be in the percpu section.
+		 */
+		if (base[i] >= 0)
+			addr = base[i];
+		else
+			addr = relative_base - 1 - base[i];
+
+		orig = addr;
+		adjust_address(&addr, sections);
+		if (addr != orig) {
+			/* here we need to recalcuate the offset */
+			new_base = relative_base - 1 - addr;
+			base[i] = new_base;
+		}
+	}
+
+	/*
+	 * here we need to read in all the kallsyms_names info
+	 * so that we can regenerate it.
+	 */
+	extended = (long) kallsyms_names;
+	extended += map;
+	names = (u8 *)extended;
+
+	debug_putstr("\nreading in old names...\n");
+	deal_with_names(num_syms);
+
+	debug_putstr("sorting addresses\n");
+	sort(base, num_syms, sizeof(int), kallsyms_cmp, kallsyms_swp);
+
+	debug_putstr("write new addresses\n");
+	/* write the newly sorted names table over the old one */
+	write_sorted_names(num_syms);
 }
 
 #if CONFIG_X86_NEED_RELOCS
@@ -463,6 +691,58 @@ static void move_text(Elf64_Shdr **sections, int num_sections, char *secstrings,
 	memmove(fakeout, output + phdr->p_offset + text->sh_size + rand_text_size, left_bytes);
 }
 
+static void parse_symtab(Elf64_Sym *symtab, char *strtab, long num_syms)
+{
+	Elf64_Sym *sym;
+
+	if (symtab == NULL || strtab == NULL)
+		return;
+
+	debug_putstr("\nLooking for symbols... ");
+	debug_putstr("\nnum symbols ");
+	debug_puthex(num_syms);
+
+	/*
+	 * walk through the symbol table looking for the symbols
+	 * that we care about.
+	 */
+	debug_putstr("\nPrinting st_name\n");
+	for (sym = symtab; --num_syms >= 0; sym++) {
+		if (!sym->st_name)
+			continue;
+
+		if (strcmp("kallsyms_num_syms", strtab + sym->st_name) == 0) {
+			debug_putstr("found kallsyms_num_syms\n");
+			debug_puthex(sym->st_value);
+			kallsyms_num_syms = (unsigned int *)sym->st_value;
+		}
+
+		if (strcmp("kallsyms_offsets", strtab + sym->st_name) == 0) {
+			debug_putstr("found kallsyms_offsets\n");
+			debug_puthex(sym->st_value);
+			kallsyms_offsets = (int *)sym->st_value;
+		}
+
+		if (strcmp("kallsyms_relative_base", strtab + sym->st_name) == 0) {
+			debug_putstr("found kallsyms_relative_base\n");
+			debug_puthex(sym->st_value);
+			kallsyms_relative_base = sym->st_value;
+		}
+
+		if (strcmp("kallsyms_names", strtab + sym->st_name) == 0) {
+			debug_putstr("found kallsyms_names\n");
+			debug_puthex(sym->st_value);
+			kallsyms_names = (u8 *)sym->st_value;
+		}
+
+		if (strcmp("kallsyms_markers", strtab + sym->st_name) == 0) {
+			debug_putstr("found kallsyms_markers\n");
+			debug_puthex(sym->st_value);
+			kallsyms_markers = (unsigned int *)sym->st_value;
+		}
+	}
+}
+
 /*
  * TBD: make this build for other than x86_64
  */
@@ -487,6 +767,9 @@ static Elf64_Shdr ** parse_elf(void *output)
 	const char *sname;
 	Elf64_Shdr **sections = NULL;
 	int num_sections = 0;
+	Elf64_Sym *symtab = NULL;
+	char *strtab = NULL;
+	long num_syms = 0;
 
 	memcpy(&ehdr, output, sizeof(ehdr));
 	if (ehdr.e_ident[EI_MAG0] != ELFMAG0 ||
@@ -527,6 +810,30 @@ static Elf64_Shdr ** parse_elf(void *output)
 		s = &sechdrs[i];
 		sname = secstrings + s->sh_name;
 
+		if (s->sh_type == SHT_SYMTAB) {
+			/* only one symtab per image */
+			debug_putstr("\nfound symtab\n");
+
+			symtab = malloc(s->sh_size);
+			if (!symtab)
+				error("Failed to allocate space for symtab");
+
+			memcpy(symtab, output + s->sh_offset, s->sh_size);
+			num_syms = s->sh_size/sizeof(*symtab);
+			continue;
+		}	
+
+		if (s->sh_type == SHT_STRTAB && (i != ehdr.e_shstrndx)) {
+			debug_putstr("\nfound strtab\n");
+			debug_putstr(sname);
+
+			strtab = malloc(s->sh_size);
+			if (!strtab)
+				error("Failed to allocate space for strtab");
+
+			memcpy(strtab, output + s->sh_offset, s->sh_size);
+		}
+
 		if (!strcmp(sname, ".text")) {
 			text = s;
 			continue;
@@ -547,6 +854,8 @@ static Elf64_Shdr ** parse_elf(void *output)
 		num_sections++;
 	}
 	sections[num_sections] = NULL;
+
+	parse_symtab(symtab, strtab, s->sh_size/sizeof(*symtab));
 
 	phdrs = malloc(sizeof(*phdrs) * ehdr.e_phnum);
 	if (!phdrs)
@@ -695,6 +1004,7 @@ asmlinkage __visible void *extract_kernel(void *rmode, memptr heap,
 	__decompress(input_data, input_len, NULL, NULL, output, output_len,
 			NULL, error);
 	sections = parse_elf(output);
+	sort_kallsyms(output, sections);
 	handle_relocations(output, output_len, virt_addr, sections);
 	free(sections);
 	debug_putstr("done.\nBooting the kernel.\n");
@@ -705,3 +1015,5 @@ void fortify_panic(const char *name)
 {
 	error("detected buffer overflow");
 }
+
+#include "../../../../lib/sort.c"

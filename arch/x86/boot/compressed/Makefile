@@ -117,7 +117,7 @@ quiet_cmd_check-and-link-vmlinux = LD      $@
 $(obj)/vmlinux: $(vmlinux-objs-y) FORCE
 	$(call if_changed,check-and-link-vmlinux)
 
-OBJCOPYFLAGS_vmlinux.bin :=  -R .comment -S
+OBJCOPYFLAGS_vmlinux.bin :=  -R .comment -S --keep-symbols=$(obj)/vmlinux.symbols
 $(obj)/vmlinux.bin: vmlinux FORCE
 	$(call if_changed,objcopy)
 

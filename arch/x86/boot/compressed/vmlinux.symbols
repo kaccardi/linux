@@ -1,0 +1,9 @@
+kallsyms_offsets
+kallsyms_addresses
+kallsyms_num_syms
+kallsyms_relative_base
+kallsyms_names
+kallsyms_token_table
+kallsyms_token_index
+kallsyms_markers
+
