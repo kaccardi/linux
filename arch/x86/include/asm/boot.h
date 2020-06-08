@@ -24,6 +24,18 @@
 # error "Invalid value for CONFIG_PHYSICAL_ALIGN"
 #endif
 
+#ifdef CONFIG_FG_KASLR
+/*
+ * We need extra boot heap when using fgkaslr because we make a copy
+ * of the original decompressed kernel to avoid issues with writing
+ * over ourselves when shuffling the sections. We also need extra
+ * space for resorting kallsyms after shuffling. This value could
+ * be decreased if free() would release memory properly, or if we
+ * could avoid the kernel copy. It would need to be increased if we
+ * find additional tables that need to be resorted.
+ */
+# define BOOT_HEAP_SIZE		0x4000000
+#else /* !CONFIG_FG_KASLR */
 #if defined(CONFIG_KERNEL_BZIP2)
 # define BOOT_HEAP_SIZE		0x400000
 #elif defined(CONFIG_KERNEL_ZSTD)
@@ -34,8 +46,9 @@
  */
 # define BOOT_HEAP_SIZE		 0x30000
 #else
-# define BOOT_HEAP_SIZE		 0x10000
-#endif
+# define BOOT_HEAP_SIZE		0x10000
+#endif /* CONFIG_KERNEL_BZIP2 */
+#endif /* CONFIG_FG_KASLR */
 
 #ifdef CONFIG_X86_64
 # define BOOT_STACK_SIZE	0x4000

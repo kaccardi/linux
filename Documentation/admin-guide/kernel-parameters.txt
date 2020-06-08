@@ -2105,6 +2105,12 @@
 			kernel and module base offset ASLR (Address Space
 			Layout Randomization).
 
+	nofgkaslr	[KNL]
+			When CONFIG_FG_KASLR is set, this parameter
+			disables kernel function granular ASLR
+			(Address Space Layout Randomization).
+			See Documentation/security/fgkaslr.rst.
+
 	kasan_multi_shot
 			[KNL] Enforce KASAN (Kernel Address Sanitizer) to print
 			report on every invalid memory access. Without this

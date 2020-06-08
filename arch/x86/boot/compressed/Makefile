@@ -85,6 +85,7 @@ vmlinux-objs-y := $(obj)/vmlinux.lds $(obj)/kernel_info.o $(obj)/head_$(BITS).o 
 
 vmlinux-objs-$(CONFIG_EARLY_PRINTK) += $(obj)/early_serial_console.o
 vmlinux-objs-$(CONFIG_RANDOMIZE_BASE) += $(obj)/kaslr.o
+vmlinux-objs-$(CONFIG_FG_KASLR) += $(obj)/utils.o $(obj)/fgkaslr.o
 ifdef CONFIG_X86_64
 	vmlinux-objs-$(CONFIG_RANDOMIZE_BASE) += $(obj)/kaslr_64.o
 	vmlinux-objs-y += $(obj)/mem_encrypt.o
@@ -125,6 +126,7 @@ OBJCOPYFLAGS_vmlinux.bin :=  -R .comment -S
 
 ifdef CONFIG_FG_KASLR
 	RELOCS_ARGS += --fg-kaslr
+	OBJCOPYFLAGS += --keep-symbols=$(srctree)/$(src)/vmlinux.symbols
 endif
 
 $(obj)/vmlinux.bin: vmlinux FORCE
