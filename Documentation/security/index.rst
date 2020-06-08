@@ -7,6 +7,7 @@ Security Documentation
 
    credentials
    IMA-templates
+   fgkaslr
    keys/index
    lsm
    lsm-development

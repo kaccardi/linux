@@ -1,0 +1,17 @@
+kallsyms_offsets
+kallsyms_addresses
+kallsyms_num_syms
+kallsyms_relative_base
+kallsyms_names
+kallsyms_token_table
+kallsyms_token_index
+kallsyms_markers
+__start___ex_table
+__stop___ex_table
+_sinittext
+_einittext
+_stext
+_etext
+__start_orc_unwind_ip
+__stop_orc_unwind_ip
+__start_orc_unwind

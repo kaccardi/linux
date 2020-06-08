@@ -299,6 +299,7 @@ typedef struct elf64_phdr {
 #define SHN_LIVEPATCH	0xff20
 #define SHN_ABS		0xfff1
 #define SHN_COMMON	0xfff2
+#define SHN_XINDEX	0xffff
 #define SHN_HIRESERVE	0xffff
  
 typedef struct elf32_shdr {
