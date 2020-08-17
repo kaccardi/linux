@@ -1998,13 +1998,11 @@ xfs_iunlink_update_inode(
 	struct xfs_trans	*tp,
 	struct xfs_inode	*ip,
 	xfs_agnumber_t		agno,
-	xfs_agino_t		next_agino,
-	xfs_agino_t		*old_next_agino)
+	xfs_agino_t		next_agino)
 {
 	struct xfs_mount	*mp = tp->t_mountp;
 	struct xfs_dinode	*dip;
 	struct xfs_buf		*ibp;
-	xfs_agino_t		old_value;
 	int			error;
 
 	ASSERT(xfs_verify_agino_or_null(mp, agno, next_agino));
@@ -2013,37 +2011,10 @@ xfs_iunlink_update_inode(
 	if (error)
 		return error;
 
-	/* Make sure the old pointer isn't garbage. */
-	old_value = be32_to_cpu(dip->di_next_unlinked);
-	if (!xfs_verify_agino_or_null(mp, agno, old_value)) {
-		xfs_inode_verifier_error(ip, -EFSCORRUPTED, __func__, dip,
-				sizeof(*dip), __this_address);
-		error = -EFSCORRUPTED;
-		goto out;
-	}
-
-	/*
-	 * Since we're updating a linked list, we should never find that the
-	 * current pointer is the same as the new value, unless we're
-	 * terminating the list.
-	 */
-	*old_next_agino = old_value;
-	if (old_value == next_agino) {
-		if (next_agino != NULLAGINO) {
-			xfs_inode_verifier_error(ip, -EFSCORRUPTED, __func__,
-					dip, sizeof(*dip), __this_address);
-			error = -EFSCORRUPTED;
-		}
-		goto out;
-	}
-
 	/* Ok, update the new pointer. */
 	xfs_iunlink_update_dinode(tp, agno, XFS_INO_TO_AGINO(mp, ip->i_ino),
 			ibp, dip, &ip->i_imap, next_agino);
 	return 0;
-out:
-	xfs_trans_brelse(tp, ibp);
-	return error;
 }
 
 static int
@@ -2079,19 +2050,15 @@ xfs_iunlink_insert_inode(
 	nip = list_first_entry_or_null(&agibp->b_pag->pag_ici_unlink_list,
 					struct xfs_inode, i_unlink);
 	if (nip) {
-		xfs_agino_t		old_agino;
-
 		ASSERT(next_agino == XFS_INO_TO_AGINO(mp, nip->i_ino));
 
 		/*
 		 * There is already another inode in the bucket, so point this
 		 * inode to the current head of the list.
 		 */
-		error = xfs_iunlink_update_inode(tp, ip, agno, next_agino,
-				&old_agino);
+		error = xfs_iunlink_update_inode(tp, ip, agno, next_agino);
 		if (error)
 			return error;
-		ASSERT(old_agino == NULLAGINO);
 	} else {
 		ASSERT(next_agino == NULLAGINO);
 	}
@@ -2149,7 +2116,7 @@ xfs_iunlink_remove_inode(
 	struct xfs_agi		*agi;
 	xfs_agino_t		agino = XFS_INO_TO_AGINO(mp, ip->i_ino);
 	xfs_agnumber_t		agno = XFS_INO_TO_AGNO(mp, ip->i_ino);
-	xfs_agino_t		next_agino;
+	xfs_agino_t		next_agino = NULLAGINO;
 	xfs_agino_t		head_agino;
 	int			error;
 
@@ -2169,23 +2136,21 @@ xfs_iunlink_remove_inode(
 	}
 
 	/*
-	 * Set our inode's next_unlinked pointer to NULL and then return
-	 * the old pointer value so that we can update whatever was previous
-	 * to us in the list to point to whatever was next in the list.
+	 * Get the next agino in the list. If we are at the end of the list,
+	 * then the previous inode's i_next_unlinked filed will get cleared.
 	 */
-	error = xfs_iunlink_update_inode(tp, ip, agno, NULLAGINO, &next_agino);
+	if (ip != list_last_entry(&agibp->b_pag->pag_ici_unlink_list,
+					struct xfs_inode, i_unlink)) {
+		struct xfs_inode *nip = list_next_entry(ip, i_unlink);
+
+		next_agino = XFS_INO_TO_AGINO(mp, nip->i_ino);
+	}
+
+	/* Clear the on disk next unlinked pointer for this inode. */
+	error = xfs_iunlink_update_inode(tp, ip, agno, NULLAGINO);
 	if (error)
 		return error;
 
-#ifdef DEBUG
-	{
-	struct xfs_inode *nip = list_next_entry(ip, i_unlink);
-	if (nip)
-		ASSERT(next_agino == XFS_INO_TO_AGINO(mp, nip->i_ino));
-	else
-		ASSERT(next_agino == NULLAGINO);
-	}
-#endif
 
 	if (ip != list_first_entry(&agibp->b_pag->pag_ici_unlink_list,
 					struct xfs_inode, i_unlink)) {
