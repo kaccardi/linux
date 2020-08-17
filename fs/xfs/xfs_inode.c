@@ -33,6 +33,7 @@
 #include "xfs_symlink.h"
 #include "xfs_trans_priv.h"
 #include "xfs_log.h"
+#include "xfs_log_priv.h"
 #include "xfs_bmap_btree.h"
 #include "xfs_reflink.h"
 
@@ -2092,25 +2093,32 @@ xfs_iunlink_update_bucket(
 	struct xfs_trans	*tp,
 	xfs_agnumber_t		agno,
 	struct xfs_buf		*agibp,
-	unsigned int		bucket_index,
+	xfs_agino_t		old_agino,
 	xfs_agino_t		new_agino)
 {
+	struct xlog		*log = tp->t_mountp->m_log;
 	struct xfs_agi		*agi = agibp->b_addr;
 	xfs_agino_t		old_value;
-	int			offset;
+	unsigned int		bucket_index;
+	int                     offset;
 
 	ASSERT(xfs_verify_agino_or_null(tp->t_mountp, agno, new_agino));
+
+	bucket_index = 0;
+	/* During recovery, the old multiple bucket index can be applied */
+	if (!log || log->l_flags & XLOG_RECOVERY_NEEDED) {
+		ASSERT(old_agino != NULLAGINO);
+
+		if (be32_to_cpu(agi->agi_unlinked[0]) != old_agino)
+			bucket_index = old_agino % XFS_AGI_UNLINKED_BUCKETS;
+	}
 
 	old_value = be32_to_cpu(agi->agi_unlinked[bucket_index]);
 	trace_xfs_iunlink_update_bucket(tp->t_mountp, agno, bucket_index,
 			old_value, new_agino);
 
-	/*
-	 * We should never find the head of the list already set to the value
-	 * passed in because either we're adding or removing ourselves from the
-	 * head of the list.
-	 */
-	if (old_value == new_agino) {
+	/* check if the old agi_unlinked head is as expected */
+	if (old_value != old_agino) {
 		xfs_buf_mark_corrupt(agibp);
 		return -EFSCORRUPTED;
 	}
@@ -2216,17 +2224,18 @@ xfs_iunlink_insert_inode(
 	xfs_agino_t		next_agino;
 	xfs_agino_t		agino = XFS_INO_TO_AGINO(mp, ip->i_ino);
 	xfs_agnumber_t		agno = XFS_INO_TO_AGNO(mp, ip->i_ino);
-	short			bucket_index = agino % XFS_AGI_UNLINKED_BUCKETS;
 	int			error;
 
 	agi = agibp->b_addr;
 
 	/*
-	 * Get the index into the agi hash table for the list this inode will
-	 * go on.  Make sure the pointer isn't garbage and that this inode
-	 * isn't already on the list.
+	 * We don't need to traverse the on disk unlinked list to find the
+	 * previous inode in the list when removing inodes anymore, so we don't
+	 * need multiple on-disk lists anymore. Hence we always use bucket 0.
+	 * Make sure the pointer isn't garbage and that this inode isn't already
+	 * on the list.
 	 */
-	next_agino = be32_to_cpu(agi->agi_unlinked[bucket_index]);
+	next_agino = be32_to_cpu(agi->agi_unlinked[0]);
 	if (next_agino == agino ||
 	    !xfs_verify_agino_or_null(mp, agno, next_agino)) {
 		xfs_buf_mark_corrupt(agibp);
@@ -2256,7 +2265,7 @@ xfs_iunlink_insert_inode(
 	}
 
 	/* Point the head of the list to point to this inode. */
-	return xfs_iunlink_update_bucket(tp, agno, agibp, bucket_index, agino);
+	return xfs_iunlink_update_bucket(tp, agno, agibp, next_agino, agino);
 }
 
 /*
@@ -2416,16 +2425,17 @@ xfs_iunlink_remove_inode(
 	xfs_agnumber_t		agno = XFS_INO_TO_AGNO(mp, ip->i_ino);
 	xfs_agino_t		next_agino;
 	xfs_agino_t		head_agino;
-	short			bucket_index = agino % XFS_AGI_UNLINKED_BUCKETS;
 	int			error;
 
 	agi = agibp->b_addr;
 
 	/*
-	 * Get the index into the agi hash table for the list this inode will
-	 * go on.  Make sure the head pointer isn't garbage.
+	 * We don't need to traverse the on disk unlinked list to find the
+	 * previous inode in the list when removing inodes anymore, so we don't
+	 * need multiple on-disk lists anymore. Hence we always use bucket 0.
+	 * Make sure the head pointer isn't garbage.
 	 */
-	head_agino = be32_to_cpu(agi->agi_unlinked[bucket_index]);
+	head_agino = be32_to_cpu(agi->agi_unlinked[0]);
 	if (!xfs_verify_agino(mp, agno, head_agino)) {
 		XFS_CORRUPTION_ERROR(__func__, XFS_ERRLEVEL_LOW, mp,
 				agi, sizeof(*agi));
@@ -2483,8 +2493,7 @@ xfs_iunlink_remove_inode(
 	}
 
 	/* Point the head of the list to the next unlinked inode. */
-	return xfs_iunlink_update_bucket(tp, agno, agibp, bucket_index,
-			next_agino);
+	return xfs_iunlink_update_bucket(tp, agno, agibp, agino, next_agino);
 }
 
 /*
