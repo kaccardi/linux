@@ -66,6 +66,7 @@ xfs_inode_alloc(
 	memset(&ip->i_d, 0, sizeof(ip->i_d));
 	ip->i_sick = 0;
 	ip->i_checked = 0;
+	INIT_LIST_HEAD(&ip->i_unlink);
 	INIT_WORK(&ip->i_ioend_work, xfs_end_io);
 	INIT_LIST_HEAD(&ip->i_ioend_list);
 	spin_lock_init(&ip->i_ioend_lock);

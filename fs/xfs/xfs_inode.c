@@ -2294,7 +2294,17 @@ xfs_iunlink(
 	if (error)
 		return error;
 
-	return xfs_iunlink_insert_inode(tp, agibp, ip);
+	/*
+	 * Insert the inode into the on disk unlinked list, and if that
+	 * succeeds, then insert it into the in memory list. We do it in this
+	 * order so that the modifications required to the on disk list are not
+	 * impacted by already having this inode in the list.
+	 */
+	error = xfs_iunlink_insert_inode(tp, agibp, ip);
+	if (!error)
+		list_add(&ip->i_unlink, &agibp->b_pag->pag_ici_unlink_list);
+
+	return error;
 }
 
 /* Return the imap, dinode pointer, and buffer for an inode. */
@@ -2516,7 +2526,14 @@ xfs_iunlink_remove(
 	if (error)
 		return error;
 
-	return xfs_iunlink_remove_inode(tp, agibp, ip);
+	/*
+	 * Remove the inode from the on-disk list and then remove it from the
+	 * in-memory list. This order of operations ensures we can look up both
+	 * next and previous inode in the on-disk list via the in-memory list.
+	 */
+	error = xfs_iunlink_remove_inode(tp, agibp, ip);
+	list_del(&ip->i_unlink);
+	return error;
 }
 
 /*

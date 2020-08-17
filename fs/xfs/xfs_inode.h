@@ -56,6 +56,7 @@ typedef struct xfs_inode {
 	uint64_t		i_delayed_blks;	/* count of delay alloc blks */
 
 	struct xfs_icdinode	i_d;		/* most of ondisk inode */
+	struct list_head	i_unlink;
 
 	/* VFS inode */
 	struct inode		i_vnode;	/* embedded VFS inode */
