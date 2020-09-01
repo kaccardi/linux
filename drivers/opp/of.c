@@ -886,6 +886,16 @@ static int _of_add_opp_table_v1(struct device *dev, struct opp_table *opp_table)
 	const __be32 *val;
 	int nr, ret = 0;
 
+	mutex_lock(&opp_table->lock);
+	if (opp_table->parsed_static_opps) {
+		opp_table->parsed_static_opps++;
+		mutex_unlock(&opp_table->lock);
+		return 0;
+	}
+
+	opp_table->parsed_static_opps = 1;
+	mutex_unlock(&opp_table->lock);
+
 	prop = of_find_property(dev->of_node, "operating-points", NULL);
 	if (!prop)
 		return -ENODEV;
@@ -901,10 +911,6 @@ static int _of_add_opp_table_v1(struct device *dev, struct opp_table *opp_table)
 		dev_err(dev, "%s: Invalid OPP table\n", __func__);
 		return -EINVAL;
 	}
-
-	mutex_lock(&opp_table->lock);
-	opp_table->parsed_static_opps = 1;
-	mutex_unlock(&opp_table->lock);
 
 	val = prop->value;
 	while (nr) {
