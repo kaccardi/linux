@@ -541,6 +541,8 @@
 				mode = "peripheral";
 				usb-role-switch;
 
+				vbus-supply = <&vdd_5v0_usb>;
+
 				connector {
 					compatible = "gpio-usb-b-connector",
 						     "usb-b-connector";
@@ -574,6 +576,7 @@
 		bus-width = <4>;
 
 		cd-gpios = <&gpio TEGRA_GPIO(Z, 1) GPIO_ACTIVE_LOW>;
+		disable-wp;
 
 		vqmmc-supply = <&vddio_sdmmc>;
 		vmmc-supply = <&vdd_3v3_sd>;
@@ -619,6 +622,18 @@
 		pinctrl-names = "dvfs_pwm_enable", "dvfs_pwm_disable";
 		pinctrl-0 = <&dvfs_pwm_active_state>;
 		pinctrl-1 = <&dvfs_pwm_inactive_state>;
+	};
+
+	aconnect@702c0000 {
+		status = "okay";
+
+		dma@702e2000 {
+			status = "okay";
+		};
+
+		interrupt-controller@702f9000 {
+			status = "okay";
+		};
 	};
 
 	clk32k_in: clock@0 {
@@ -818,7 +833,7 @@
 
 	vdd_gpu: regulator@6 {
 		compatible = "pwm-regulator";
-		pwms = <&pwm 1 4880>;
+		pwms = <&pwm 1 8000>;
 
 		regulator-name = "VDD_GPU";
 		regulator-min-microvolt = <710000>;
@@ -842,5 +857,15 @@
 		enable-active-high;
 
 		vin-supply = <&avdd_1v05_pll>;
+	};
+
+	vdd_5v0_usb: regulator@8 {
+		compatible = "regulator-fixed";
+
+		regulator-name = "VDD_5V_USB";
+		regulator-min-microvolt = <50000000>;
+		regulator-max-microvolt = <50000000>;
+
+		vin-supply = <&vdd_5v0_sys>;
 	};
 };
