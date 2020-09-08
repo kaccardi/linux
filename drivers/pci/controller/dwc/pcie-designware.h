@@ -32,10 +32,18 @@
 /* Synopsys-specific PCIe configuration registers */
 #define PCIE_PORT_AFR			0x70C
 #define PORT_AFR_N_FTS_MASK		GENMASK(15, 8)
+#define PORT_AFR_N_FTS(n)		FIELD_PREP(PORT_AFR_N_FTS_MASK, n)
 #define PORT_AFR_CC_N_FTS_MASK		GENMASK(23, 16)
+#define PORT_AFR_CC_N_FTS(n)		FIELD_PREP(PORT_AFR_CC_N_FTS_MASK, n)
+#define PORT_AFR_ENTER_ASPM		BIT(30)
+#define PORT_AFR_L0S_ENTRANCE_LAT_SHIFT	24
+#define PORT_AFR_L0S_ENTRANCE_LAT_MASK	GENMASK(26, 24)
+#define PORT_AFR_L1_ENTRANCE_LAT_SHIFT	27
+#define PORT_AFR_L1_ENTRANCE_LAT_MASK	GENMASK(29, 27)
 
 #define PCIE_PORT_LINK_CONTROL		0x710
 #define PORT_LINK_DLL_LINK_EN		BIT(5)
+#define PORT_LINK_FAST_LINK_MODE	BIT(7)
 #define PORT_LINK_MODE_MASK		GENMASK(21, 16)
 #define PORT_LINK_MODE(n)		FIELD_PREP(PORT_LINK_MODE_MASK, n)
 #define PORT_LINK_MODE_1_LANES		PORT_LINK_MODE(0x1)
@@ -160,14 +168,7 @@ enum dw_pcie_device_mode {
 };
 
 struct dw_pcie_host_ops {
-	int (*rd_own_conf)(struct pcie_port *pp, int where, int size, u32 *val);
-	int (*wr_own_conf)(struct pcie_port *pp, int where, int size, u32 val);
-	int (*rd_other_conf)(struct pcie_port *pp, struct pci_bus *bus,
-			     unsigned int devfn, int where, int size, u32 *val);
-	int (*wr_other_conf)(struct pcie_port *pp, struct pci_bus *bus,
-			     unsigned int devfn, int where, int size, u32 val);
 	int (*host_init)(struct pcie_port *pp);
-	void (*scan_bus)(struct pcie_port *pp);
 	void (*set_num_vectors)(struct pcie_port *pp);
 	int (*msi_host_init)(struct pcie_port *pp);
 };
@@ -176,19 +177,9 @@ struct pcie_port {
 	u64			cfg0_base;
 	void __iomem		*va_cfg0_base;
 	u32			cfg0_size;
-	u64			cfg1_base;
-	void __iomem		*va_cfg1_base;
-	u32			cfg1_size;
 	resource_size_t		io_base;
 	phys_addr_t		io_bus_addr;
 	u32			io_size;
-	u64			mem_base;
-	phys_addr_t		mem_bus_addr;
-	u32			mem_size;
-	struct resource		*cfg;
-	struct resource		*io;
-	struct resource		*mem;
-	struct resource		*busn;
 	int			irq;
 	const struct dw_pcie_host_ops *ops;
 	int			msi_irq;
@@ -199,7 +190,7 @@ struct pcie_port {
 	struct irq_chip		*msi_irq_chip;
 	u32			num_vectors;
 	u32			irq_mask[MAX_MSI_CTRLS];
-	struct pci_bus		*root_bus;
+	struct pci_host_bridge  *bridge;
 	raw_spinlock_t		lock;
 	DECLARE_BITMAP(msi_irq_in_use, MAX_MSI_IRQS);
 };
@@ -242,8 +233,6 @@ struct dw_pcie_ops {
 			    size_t size);
 	void	(*write_dbi)(struct dw_pcie *pcie, void __iomem *base, u32 reg,
 			     size_t size, u32 val);
-	u32     (*read_dbi2)(struct dw_pcie *pcie, void __iomem *base, u32 reg,
-			     size_t size);
 	void    (*write_dbi2)(struct dw_pcie *pcie, void __iomem *base, u32 reg,
 			      size_t size, u32 val);
 	int	(*link_up)(struct dw_pcie *pcie);
@@ -263,6 +252,9 @@ struct dw_pcie {
 	struct dw_pcie_ep	ep;
 	const struct dw_pcie_ops *ops;
 	unsigned int		version;
+	int			num_lanes;
+	int			link_gen;
+	u8			n_fts[2];
 };
 
 #define to_dw_pcie_from_pp(port) container_of((port), struct dw_pcie, pp)
@@ -278,14 +270,9 @@ int dw_pcie_write(void __iomem *addr, int size, u32 val);
 
 u32 dw_pcie_read_dbi(struct dw_pcie *pci, u32 reg, size_t size);
 void dw_pcie_write_dbi(struct dw_pcie *pci, u32 reg, size_t size, u32 val);
-u32 dw_pcie_read_dbi2(struct dw_pcie *pci, u32 reg, size_t size);
 void dw_pcie_write_dbi2(struct dw_pcie *pci, u32 reg, size_t size, u32 val);
-u32 dw_pcie_read_atu(struct dw_pcie *pci, u32 reg, size_t size);
-void dw_pcie_write_atu(struct dw_pcie *pci, u32 reg, size_t size, u32 val);
 int dw_pcie_link_up(struct dw_pcie *pci);
 void dw_pcie_upconfig_setup(struct dw_pcie *pci);
-void dw_pcie_link_set_max_speed(struct dw_pcie *pci, u32 link_gen);
-void dw_pcie_link_set_n_fts(struct dw_pcie *pci, u32 n_fts);
 int dw_pcie_wait_for_link(struct dw_pcie *pci);
 void dw_pcie_prog_outbound_atu(struct dw_pcie *pci, int index,
 			       int type, u64 cpu_addr, u64 pci_addr,
@@ -331,21 +318,6 @@ static inline void dw_pcie_writel_dbi2(struct dw_pcie *pci, u32 reg, u32 val)
 	dw_pcie_write_dbi2(pci, reg, 0x4, val);
 }
 
-static inline u32 dw_pcie_readl_dbi2(struct dw_pcie *pci, u32 reg)
-{
-	return dw_pcie_read_dbi2(pci, reg, 0x4);
-}
-
-static inline void dw_pcie_writel_atu(struct dw_pcie *pci, u32 reg, u32 val)
-{
-	dw_pcie_write_atu(pci, reg, 0x4, val);
-}
-
-static inline u32 dw_pcie_readl_atu(struct dw_pcie *pci, u32 reg)
-{
-	return dw_pcie_read_atu(pci, reg, 0x4);
-}
-
 static inline void dw_pcie_dbi_ro_wr_en(struct dw_pcie *pci)
 {
 	u32 reg;
@@ -376,6 +348,8 @@ void dw_pcie_setup_rc(struct pcie_port *pp);
 int dw_pcie_host_init(struct pcie_port *pp);
 void dw_pcie_host_deinit(struct pcie_port *pp);
 int dw_pcie_allocate_domains(struct pcie_port *pp);
+void __iomem *dw_pcie_own_conf_map_bus(struct pci_bus *bus, unsigned int devfn,
+				       int where);
 #else
 static inline irqreturn_t dw_handle_msi_irq(struct pcie_port *pp)
 {
@@ -406,6 +380,12 @@ static inline void dw_pcie_host_deinit(struct pcie_port *pp)
 static inline int dw_pcie_allocate_domains(struct pcie_port *pp)
 {
 	return 0;
+}
+static inline void __iomem *dw_pcie_own_conf_map_bus(struct pci_bus *bus,
+						     unsigned int devfn,
+						     int where)
+{
+	return NULL;
 }
 #endif
 
