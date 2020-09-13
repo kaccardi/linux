@@ -102,7 +102,7 @@ struct extent_buffer {
 
 	int blocking_writers;
 	atomic_t blocking_readers;
-	bool lock_nested;
+	bool lock_recursed;
 	/* >= 0 if eb belongs to a log tree, -1 otherwise */
 	short log_index;
 
@@ -203,7 +203,7 @@ int extent_writepages(struct address_space *mapping,
 int btree_write_cache_pages(struct address_space *mapping,
 			    struct writeback_control *wbc);
 void extent_readahead(struct readahead_control *rac);
-int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
+int extent_fiemap(struct btrfs_inode *inode, struct fiemap_extent_info *fieinfo,
 		  u64 start, u64 len);
 void set_page_extent_mapped(struct page *page);
 
