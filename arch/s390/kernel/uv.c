@@ -49,6 +49,13 @@ static int __init prot_virt_setup(char *val)
 		pr_warn("Protected virtualization not supported by the hardware.");
 	}
 
+	if (prot_virt_host && IS_ENABLED(CONFIG_KASAN_S390_4_LEVEL_PAGING) &&
+	    uv_info.max_sec_stor_addr < _REGION1_SIZE) {
+		prot_virt_host = 0;
+		pr_warn("Protected virtualization is disabled. Ultravisor addressing\n"
+			"limitations are not compatible with KASAN_S390_4_LEVEL_PAGING.");
+	}
+
 	return rc;
 }
 early_param("prot_virt", prot_virt_setup);
