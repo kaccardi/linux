@@ -5,6 +5,7 @@
 #define __SOUNDWIRE_H
 
 #include <linux/mod_devicetable.h>
+#include <linux/bitfield.h>
 
 struct sdw_bus;
 struct sdw_slave;
@@ -38,7 +39,8 @@ struct sdw_slave;
 #define SDW_FRAME_CTRL_BITS		48
 #define SDW_MAX_DEVICES			11
 
-#define SDW_VALID_PORT_RANGE(n)		((n) <= 14 && (n) >= 1)
+#define SDW_MAX_PORTS			15
+#define SDW_VALID_PORT_RANGE(n)		((n) < SDW_MAX_PORTS && (n) >= 1)
 
 enum {
 	SDW_PORT_DIRN_SINK = 0,
@@ -355,6 +357,8 @@ struct sdw_dpn_prop {
  * @dp0_prop: Data Port 0 properties
  * @src_dpn_prop: Source Data Port N properties
  * @sink_dpn_prop: Sink Data Port N properties
+ * @scp_int1_mask: SCP_INT1_MASK desired settings
+ * @quirks: bitmask identifying deltas from the MIPI specification
  */
 struct sdw_slave_prop {
 	u32 mipi_revision;
@@ -376,7 +380,11 @@ struct sdw_slave_prop {
 	struct sdw_dp0_prop *dp0_prop;
 	struct sdw_dpn_prop *src_dpn_prop;
 	struct sdw_dpn_prop *sink_dpn_prop;
+	u8 scp_int1_mask;
+	u32 quirks;
 };
+
+#define SDW_SLAVE_QUIRKS_INVALID_INITIAL_PARITY	BIT(0)
 
 /**
  * struct sdw_master_prop - Master properties
@@ -455,13 +463,19 @@ struct sdw_slave_id {
  *
  * The MIPI DisCo for SoundWire defines in addition the link_id as bits 51:48
  */
+#define SDW_DISCO_LINK_ID_MASK	GENMASK_ULL(51, 48)
+#define SDW_VERSION_MASK	GENMASK_ULL(47, 44)
+#define SDW_UNIQUE_ID_MASK	GENMASK_ULL(43, 40)
+#define SDW_MFG_ID_MASK		GENMASK_ULL(39, 24)
+#define SDW_PART_ID_MASK	GENMASK_ULL(23, 8)
+#define SDW_CLASS_ID_MASK	GENMASK_ULL(7, 0)
 
-#define SDW_DISCO_LINK_ID(adr)	(((adr) >> 48) & GENMASK(3, 0))
-#define SDW_VERSION(adr)	(((adr) >> 44) & GENMASK(3, 0))
-#define SDW_UNIQUE_ID(adr)	(((adr) >> 40) & GENMASK(3, 0))
-#define SDW_MFG_ID(adr)		(((adr) >> 24) & GENMASK(15, 0))
-#define SDW_PART_ID(adr)	(((adr) >> 8) & GENMASK(15, 0))
-#define SDW_CLASS_ID(adr)	((adr) & GENMASK(7, 0))
+#define SDW_DISCO_LINK_ID(addr)	FIELD_GET(SDW_DISCO_LINK_ID_MASK, addr)
+#define SDW_VERSION(addr)	FIELD_GET(SDW_VERSION_MASK, addr)
+#define SDW_UNIQUE_ID(addr)	FIELD_GET(SDW_UNIQUE_ID_MASK, addr)
+#define SDW_MFG_ID(addr)	FIELD_GET(SDW_MFG_ID_MASK, addr)
+#define SDW_PART_ID(addr)	FIELD_GET(SDW_PART_ID_MASK, addr)
+#define SDW_CLASS_ID(addr)	FIELD_GET(SDW_CLASS_ID_MASK, addr)
 
 /**
  * struct sdw_slave_intr_status - Slave interrupt status
@@ -606,6 +620,8 @@ struct sdw_slave_ops {
  * between the Master suspending and the codec resuming, and make sure that
  * when the Master triggered a reset the Slave is properly enumerated and
  * initialized
+ * @first_interrupt_done: status flag tracking if the interrupt handling
+ * for a Slave happens for the first time after enumeration
  */
 struct sdw_slave {
 	struct sdw_slave_id id;
@@ -618,7 +634,7 @@ struct sdw_slave {
 	struct dentry *debugfs;
 #endif
 	struct list_head node;
-	struct completion *port_ready;
+	struct completion port_ready[SDW_MAX_PORTS];
 	enum sdw_clk_stop_mode curr_clk_stop_mode;
 	u16 dev_num;
 	u16 dev_num_sticky;
@@ -627,6 +643,7 @@ struct sdw_slave {
 	struct completion enumeration_complete;
 	struct completion initialization_complete;
 	u32 unattach_request;
+	bool first_interrupt_done;
 };
 
 #define dev_to_sdw_dev(_dev) container_of(_dev, struct sdw_slave, dev)
@@ -827,6 +844,11 @@ struct sdw_master_ops {
  * @multi_link: Store bus property that indicates if multi links
  * are supported. This flag is populated by drivers after reading
  * appropriate firmware (ACPI/DT).
+ * @hw_sync_min_links: Number of links used by a stream above which
+ * hardware-based synchronization is required. This value is only
+ * meaningful if multi_link is set. If set to 1, hardware-based
+ * synchronization will be used even if a stream only uses a single
+ * SoundWire segment.
  */
 struct sdw_bus {
 	struct device *dev;
@@ -850,6 +872,7 @@ struct sdw_bus {
 	unsigned int clk_stop_timeout;
 	u32 bank_switch_timeout;
 	bool multi_link;
+	int hw_sync_min_links;
 };
 
 int sdw_bus_master_add(struct sdw_bus *bus, struct device *parent,
