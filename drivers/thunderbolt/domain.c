@@ -275,7 +275,7 @@ static struct attribute *domain_attrs[] = {
 static umode_t domain_attr_is_visible(struct kobject *kobj,
 				      struct attribute *attr, int n)
 {
-	struct device *dev = container_of(kobj, struct device, kobj);
+	struct device *dev = kobj_to_dev(kobj);
 	struct tb *tb = container_of(dev, struct tb, dev);
 
 	if (attr == &dev_attr_boot_acl.attr) {
@@ -454,6 +454,8 @@ int tb_domain_add(struct tb *tb)
 
 	/* This starts event processing */
 	mutex_unlock(&tb->lock);
+
+	device_init_wakeup(&tb->dev, true);
 
 	pm_runtime_no_callbacks(&tb->dev);
 	pm_runtime_set_active(&tb->dev);
@@ -798,12 +800,20 @@ int tb_domain_init(void)
 {
 	int ret;
 
+	tb_debugfs_init();
 	ret = tb_xdomain_init();
 	if (ret)
-		return ret;
+		goto err_debugfs;
 	ret = bus_register(&tb_bus_type);
 	if (ret)
-		tb_xdomain_exit();
+		goto err_xdomain;
+
+	return 0;
+
+err_xdomain:
+	tb_xdomain_exit();
+err_debugfs:
+	tb_debugfs_exit();
 
 	return ret;
 }
@@ -814,4 +824,5 @@ void tb_domain_exit(void)
 	ida_destroy(&tb_domain_ida);
 	tb_nvm_exit();
 	tb_xdomain_exit();
+	tb_debugfs_exit();
 }
