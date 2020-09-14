@@ -166,21 +166,6 @@ void dw_pcie_write_dbi(struct dw_pcie *pci, u32 reg, size_t size, u32 val)
 }
 EXPORT_SYMBOL_GPL(dw_pcie_write_dbi);
 
-u32 dw_pcie_read_dbi2(struct dw_pcie *pci, u32 reg, size_t size)
-{
-	int ret;
-	u32 val;
-
-	if (pci->ops->read_dbi2)
-		return pci->ops->read_dbi2(pci, pci->dbi_base2, reg, size);
-
-	ret = dw_pcie_read(pci->dbi_base2 + reg, size, &val);
-	if (ret)
-		dev_err(pci->dev, "read DBI address failed\n");
-
-	return val;
-}
-
 void dw_pcie_write_dbi2(struct dw_pcie *pci, u32 reg, size_t size, u32 val)
 {
 	int ret;
@@ -195,31 +180,31 @@ void dw_pcie_write_dbi2(struct dw_pcie *pci, u32 reg, size_t size, u32 val)
 		dev_err(pci->dev, "write DBI address failed\n");
 }
 
-u32 dw_pcie_read_atu(struct dw_pcie *pci, u32 reg, size_t size)
+static u32 dw_pcie_readl_atu(struct dw_pcie *pci, u32 reg)
 {
 	int ret;
 	u32 val;
 
 	if (pci->ops->read_dbi)
-		return pci->ops->read_dbi(pci, pci->atu_base, reg, size);
+		return pci->ops->read_dbi(pci, pci->atu_base, reg, 4);
 
-	ret = dw_pcie_read(pci->atu_base + reg, size, &val);
+	ret = dw_pcie_read(pci->atu_base + reg, 4, &val);
 	if (ret)
 		dev_err(pci->dev, "Read ATU address failed\n");
 
 	return val;
 }
 
-void dw_pcie_write_atu(struct dw_pcie *pci, u32 reg, size_t size, u32 val)
+static void dw_pcie_writel_atu(struct dw_pcie *pci, u32 reg, u32 val)
 {
 	int ret;
 
 	if (pci->ops->write_dbi) {
-		pci->ops->write_dbi(pci, pci->atu_base, reg, size, val);
+		pci->ops->write_dbi(pci, pci->atu_base, reg, 4, val);
 		return;
 	}
 
-	ret = dw_pcie_write(pci->atu_base + reg, size, val);
+	ret = dw_pcie_write(pci->atu_base + reg, 4, val);
 	if (ret)
 		dev_err(pci->dev, "Write ATU address failed\n");
 }
@@ -488,50 +473,42 @@ void dw_pcie_upconfig_setup(struct dw_pcie *pci)
 }
 EXPORT_SYMBOL_GPL(dw_pcie_upconfig_setup);
 
-void dw_pcie_link_set_max_speed(struct dw_pcie *pci, u32 link_gen)
+static void dw_pcie_link_set_max_speed(struct dw_pcie *pci, u32 link_gen)
 {
-	u32 reg, val;
+	u32 cap, ctrl2, link_speed;
 	u8 offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
 
-	reg = dw_pcie_readl_dbi(pci, offset + PCI_EXP_LNKCTL2);
-	reg &= ~PCI_EXP_LNKCTL2_TLS;
+	cap = dw_pcie_readl_dbi(pci, offset + PCI_EXP_LNKCAP);
+	ctrl2 = dw_pcie_readl_dbi(pci, offset + PCI_EXP_LNKCTL2);
+	ctrl2 &= ~PCI_EXP_LNKCTL2_TLS;
 
 	switch (pcie_link_speed[link_gen]) {
 	case PCIE_SPEED_2_5GT:
-		reg |= PCI_EXP_LNKCTL2_TLS_2_5GT;
+		link_speed = PCI_EXP_LNKCTL2_TLS_2_5GT;
 		break;
 	case PCIE_SPEED_5_0GT:
-		reg |= PCI_EXP_LNKCTL2_TLS_5_0GT;
+		link_speed = PCI_EXP_LNKCTL2_TLS_5_0GT;
 		break;
 	case PCIE_SPEED_8_0GT:
-		reg |= PCI_EXP_LNKCTL2_TLS_8_0GT;
+		link_speed = PCI_EXP_LNKCTL2_TLS_8_0GT;
 		break;
 	case PCIE_SPEED_16_0GT:
-		reg |= PCI_EXP_LNKCTL2_TLS_16_0GT;
+		link_speed = PCI_EXP_LNKCTL2_TLS_16_0GT;
 		break;
 	default:
 		/* Use hardware capability */
-		val = dw_pcie_readl_dbi(pci, offset + PCI_EXP_LNKCAP);
-		val = FIELD_GET(PCI_EXP_LNKCAP_SLS, val);
-		reg &= ~PCI_EXP_LNKCTL2_HASD;
-		reg |= FIELD_PREP(PCI_EXP_LNKCTL2_TLS, val);
+		link_speed = FIELD_GET(PCI_EXP_LNKCAP_SLS, cap);
+		ctrl2 &= ~PCI_EXP_LNKCTL2_HASD;
 		break;
 	}
 
-	dw_pcie_writel_dbi(pci, offset + PCI_EXP_LNKCTL2, reg);
+	dw_pcie_writel_dbi(pci, offset + PCI_EXP_LNKCTL2, ctrl2 | link_speed);
+
+	cap &= ~((u32)PCI_EXP_LNKCAP_SLS);
+	dw_pcie_writel_dbi(pci, offset + PCI_EXP_LNKCAP, cap | link_speed);
+
 }
 EXPORT_SYMBOL_GPL(dw_pcie_link_set_max_speed);
-
-void dw_pcie_link_set_n_fts(struct dw_pcie *pci, u32 n_fts)
-{
-	u32 val;
-
-	val = dw_pcie_readl_dbi(pci, PCIE_LINK_WIDTH_SPEED_CONTROL);
-	val &= ~PORT_LOGIC_N_FTS_MASK;
-	val |= n_fts & PORT_LOGIC_N_FTS_MASK;
-	dw_pcie_writel_dbi(pci, PCIE_LINK_WIDTH_SPEED_CONTROL, val);
-}
-EXPORT_SYMBOL_GPL(dw_pcie_link_set_n_fts);
 
 static u8 dw_pcie_iatu_unroll_enabled(struct dw_pcie *pci)
 {
@@ -546,9 +523,7 @@ static u8 dw_pcie_iatu_unroll_enabled(struct dw_pcie *pci)
 
 void dw_pcie_setup(struct dw_pcie *pci)
 {
-	int ret;
 	u32 val;
-	u32 lanes;
 	struct device *dev = pci->dev;
 	struct device_node *np = dev->of_node;
 
@@ -561,17 +536,41 @@ void dw_pcie_setup(struct dw_pcie *pci)
 	dev_dbg(pci->dev, "iATU unroll: %s\n", pci->iatu_unroll_enabled ?
 		"enabled" : "disabled");
 
+	if (pci->link_gen > 0)
+		dw_pcie_link_set_max_speed(pci, pci->link_gen);
 
-	ret = of_property_read_u32(np, "num-lanes", &lanes);
-	if (ret) {
-		dev_dbg(pci->dev, "property num-lanes isn't found\n");
+	/* Configure Gen1 N_FTS */
+	if (pci->n_fts[0]) {
+		val = dw_pcie_readl_dbi(pci, PCIE_PORT_AFR);
+		val &= ~(PORT_AFR_N_FTS_MASK | PORT_AFR_CC_N_FTS_MASK);
+		val |= PORT_AFR_N_FTS(pci->n_fts[0]);
+		val |= PORT_AFR_CC_N_FTS(pci->n_fts[0]);
+		dw_pcie_writel_dbi(pci, PCIE_PORT_AFR, val);
+	}
+
+	/* Configure Gen2+ N_FTS */
+	if (pci->n_fts[1]) {
+		val = dw_pcie_readl_dbi(pci, PCIE_LINK_WIDTH_SPEED_CONTROL);
+		val &= ~PORT_LOGIC_N_FTS_MASK;
+		val |= pci->n_fts[pci->link_gen - 1];
+		dw_pcie_writel_dbi(pci, PCIE_LINK_WIDTH_SPEED_CONTROL, val);
+	}
+
+	val = dw_pcie_readl_dbi(pci, PCIE_PORT_LINK_CONTROL);
+	val &= ~PORT_LINK_FAST_LINK_MODE;
+	val |= PORT_LINK_DLL_LINK_EN;
+	dw_pcie_writel_dbi(pci, PCIE_PORT_LINK_CONTROL, val);
+
+	of_property_read_u32(np, "num-lanes", &pci->num_lanes);
+	if (!pci->num_lanes) {
+		dev_dbg(pci->dev, "Using h/w default number of lanes\n");
 		return;
 	}
 
 	/* Set the number of lanes */
-	val = dw_pcie_readl_dbi(pci, PCIE_PORT_LINK_CONTROL);
+	val &= ~PORT_LINK_FAST_LINK_MODE;
 	val &= ~PORT_LINK_MODE_MASK;
-	switch (lanes) {
+	switch (pci->num_lanes) {
 	case 1:
 		val |= PORT_LINK_MODE_1_LANES;
 		break;
@@ -585,7 +584,7 @@ void dw_pcie_setup(struct dw_pcie *pci)
 		val |= PORT_LINK_MODE_8_LANES;
 		break;
 	default:
-		dev_err(pci->dev, "num-lanes %u: invalid value\n", lanes);
+		dev_err(pci->dev, "num-lanes %u: invalid value\n", pci->num_lanes);
 		return;
 	}
 	dw_pcie_writel_dbi(pci, PCIE_PORT_LINK_CONTROL, val);
@@ -593,7 +592,7 @@ void dw_pcie_setup(struct dw_pcie *pci)
 	/* Set link width speed control register */
 	val = dw_pcie_readl_dbi(pci, PCIE_LINK_WIDTH_SPEED_CONTROL);
 	val &= ~PORT_LOGIC_LINK_WIDTH_MASK;
-	switch (lanes) {
+	switch (pci->num_lanes) {
 	case 1:
 		val |= PORT_LOGIC_LINK_WIDTH_1_LANES;
 		break;
