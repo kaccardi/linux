@@ -131,6 +131,8 @@ static const struct linux_logo *newport_show_logo(void)
 		npregs->go.hostrw0 = *data++ << 24;
 
 	return logo;
+#else
+	return NULL;
 #endif /* CONFIG_LOGO_SGI_CLUT224 */
 }
 
@@ -749,18 +751,6 @@ static struct gio_driver newport_driver = {
 	.probe = newport_probe,
 	.remove = newport_remove,
 };
-
-int __init newport_console_init(void)
-{
-	return gio_register_driver(&newport_driver);
-}
-
-void __exit newport_console_exit(void)
-{
-	gio_unregister_driver(&newport_driver);
-}
-
-module_init(newport_console_init);
-module_exit(newport_console_exit);
+module_driver(newport_driver, gio_register_driver, gio_unregister_driver);
 
 MODULE_LICENSE("GPL");
