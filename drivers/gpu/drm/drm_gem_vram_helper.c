@@ -135,28 +135,28 @@ static void ttm_buffer_object_destroy(struct ttm_buffer_object *bo)
 static void drm_gem_vram_placement(struct drm_gem_vram_object *gbo,
 				   unsigned long pl_flag)
 {
+	u32 invariant_flags = 0;
 	unsigned int i;
 	unsigned int c = 0;
-	u32 invariant_flags = pl_flag & TTM_PL_FLAG_TOPDOWN;
+
+	if (pl_flag & DRM_GEM_VRAM_PL_FLAG_TOPDOWN)
+		pl_flag = TTM_PL_FLAG_TOPDOWN;
 
 	gbo->placement.placement = gbo->placements;
 	gbo->placement.busy_placement = gbo->placements;
 
-	if (pl_flag & TTM_PL_FLAG_VRAM)
+	if (pl_flag & DRM_GEM_VRAM_PL_FLAG_VRAM) {
+		gbo->placements[c].mem_type = TTM_PL_VRAM;
 		gbo->placements[c++].flags = TTM_PL_FLAG_WC |
 					     TTM_PL_FLAG_UNCACHED |
-					     TTM_PL_FLAG_VRAM |
 					     invariant_flags;
+	}
 
-	if (pl_flag & TTM_PL_FLAG_SYSTEM)
+	if (pl_flag & DRM_GEM_VRAM_PL_FLAG_SYSTEM || !c) {
+		gbo->placements[c].mem_type = TTM_PL_SYSTEM;
 		gbo->placements[c++].flags = TTM_PL_MASK_CACHING |
-					     TTM_PL_FLAG_SYSTEM |
 					     invariant_flags;
-
-	if (!c)
-		gbo->placements[c++].flags = TTM_PL_MASK_CACHING |
-					     TTM_PL_FLAG_SYSTEM |
-					     invariant_flags;
+	}
 
 	gbo->placement.num_placement = c;
 	gbo->placement.num_busy_placement = c;
@@ -189,7 +189,8 @@ static int drm_gem_vram_init(struct drm_device *dev,
 	acc_size = ttm_bo_dma_acc_size(bdev, size, sizeof(*gbo));
 
 	gbo->bo.bdev = bdev;
-	drm_gem_vram_placement(gbo, TTM_PL_FLAG_VRAM | TTM_PL_FLAG_SYSTEM);
+	drm_gem_vram_placement(gbo, DRM_GEM_VRAM_PL_FLAG_VRAM |
+			       DRM_GEM_VRAM_PL_FLAG_SYSTEM);
 
 	ret = ttm_bo_init(bdev, &gbo->bo, size, ttm_bo_type_device,
 			  &gbo->placement, pg_align, false, acc_size,
@@ -647,7 +648,7 @@ static bool drm_is_gem_vram(struct ttm_buffer_object *bo)
 static void drm_gem_vram_bo_driver_evict_flags(struct drm_gem_vram_object *gbo,
 					       struct ttm_placement *pl)
 {
-	drm_gem_vram_placement(gbo, TTM_PL_FLAG_SYSTEM);
+	drm_gem_vram_placement(gbo, DRM_GEM_VRAM_PL_FLAG_SYSTEM);
 	*pl = gbo->placement;
 }
 
@@ -967,15 +968,11 @@ static const struct drm_gem_object_funcs drm_gem_vram_object_funcs = {
  * TTM TT
  */
 
-static void backend_func_destroy(struct ttm_tt *tt)
+static void bo_driver_ttm_tt_destroy(struct ttm_bo_device *bdev, struct ttm_tt *tt)
 {
 	ttm_tt_fini(tt);
 	kfree(tt);
 }
-
-static struct ttm_backend_func backend_func = {
-	.destroy = backend_func_destroy
-};
 
 /*
  * TTM BO device
@@ -990,8 +987,6 @@ static struct ttm_tt *bo_driver_ttm_tt_create(struct ttm_buffer_object *bo,
 	tt = kzalloc(sizeof(*tt), GFP_KERNEL);
 	if (!tt)
 		return NULL;
-
-	tt->func = &backend_func;
 
 	ret = ttm_tt_init(tt, bo, page_flags);
 	if (ret < 0)
@@ -1042,8 +1037,7 @@ static int bo_driver_io_mem_reserve(struct ttm_bo_device *bdev,
 	case TTM_PL_SYSTEM:	/* nothing to do */
 		break;
 	case TTM_PL_VRAM:
-		mem->bus.offset = mem->start << PAGE_SHIFT;
-		mem->bus.base = vmm->vram_base;
+		mem->bus.offset = (mem->start << PAGE_SHIFT) + vmm->vram_base;
 		mem->bus.is_iomem = true;
 		break;
 	default:
@@ -1055,6 +1049,7 @@ static int bo_driver_io_mem_reserve(struct ttm_bo_device *bdev,
 
 static struct ttm_bo_driver bo_driver = {
 	.ttm_tt_create = bo_driver_ttm_tt_create,
+	.ttm_tt_destroy = bo_driver_ttm_tt_destroy,
 	.eviction_valuable = ttm_bo_eviction_valuable,
 	.evict_flags = bo_driver_evict_flags,
 	.move_notify = bo_driver_move_notify,
