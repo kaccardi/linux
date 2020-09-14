@@ -78,7 +78,7 @@ int wfx_cmd_send(struct wfx_dev *wdev, struct hif_msg *request,
 
 	wfx_bh_request_tx(wdev);
 
-	// NOTE: no timeout is catched async is enabled
+	// NOTE: no timeout is caught async is enabled
 	if (async)
 		return 0;
 
@@ -125,7 +125,7 @@ int wfx_cmd_send(struct wfx_dev *wdev, struct hif_msg *request,
 
 // This function is special. After HIF_REQ_ID_SHUT_DOWN, chip won't reply to any
 // request anymore. We need to slightly hack struct wfx_hif_cmd for that job. Be
-// carefull to only call this funcion during device unregister.
+// careful to only call this function during device unregister.
 int hif_shutdown(struct wfx_dev *wdev)
 {
 	int ret;
@@ -499,7 +499,7 @@ int hif_beacon_transmit(struct wfx_vif *wvif, bool enable)
 	return ret;
 }
 
-int hif_map_link(struct wfx_vif *wvif, u8 *mac_addr, int flags, int sta_id)
+int hif_map_link(struct wfx_vif *wvif, bool unmap, u8 *mac_addr, int sta_id, bool mfp)
 {
 	int ret;
 	struct hif_msg *hif;
@@ -509,7 +509,8 @@ int hif_map_link(struct wfx_vif *wvif, u8 *mac_addr, int flags, int sta_id)
 		return -ENOMEM;
 	if (mac_addr)
 		ether_addr_copy(body->mac_addr, mac_addr);
-	body->map_link_flags = *(struct hif_map_link_flags *)&flags;
+	body->map_link_flags.mfpc = mfp ? 1 : 0;
+	body->map_link_flags.map_direction = unmap ? 1 : 0;
 	body->peer_sta_id = sta_id;
 	wfx_fill_header(hif, wvif->id, HIF_REQ_ID_MAP_LINK, sizeof(*body));
 	ret = wfx_cmd_send(wvif->wdev, hif, NULL, 0, false);

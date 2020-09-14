@@ -214,7 +214,7 @@ static int wfx_get_ps_timeout(struct wfx_vif *wvif, bool *enable_ps)
 	if (chan0 && chan1 && chan0->hw_value != chan1->hw_value &&
 	    wvif->vif->type != NL80211_IFTYPE_AP) {
 		// It is necessary to enable powersave if channels
-		// are differents.
+		// are different.
 		if (enable_ps)
 			*enable_ps = true;
 		if (wvif->wdev->force_ps_timeout > -1)
@@ -323,36 +323,6 @@ void wfx_set_default_unicast_key(struct ieee80211_hw *hw,
 	hif_wep_default_key_id(wvif, idx);
 }
 
-static void wfx_set_mfp(struct wfx_vif *wvif,
-			struct cfg80211_bss *bss)
-{
-	const int pairwise_cipher_suite_count_offset = 8 / sizeof(u16);
-	const int pairwise_cipher_suite_size = 4 / sizeof(u16);
-	const int akm_suite_size = 4 / sizeof(u16);
-	const u16 *ptr = NULL;
-	bool mfpc = false;
-	bool mfpr = false;
-
-	/* 802.11w protected mgmt frames */
-
-	/* retrieve MFPC and MFPR flags from beacon or PBRSP */
-
-	rcu_read_lock();
-	if (bss)
-		ptr = (const u16 *)ieee80211_bss_get_ie(bss, WLAN_EID_RSN);
-
-	if (ptr) {
-		ptr += pairwise_cipher_suite_count_offset;
-		ptr += 1 + pairwise_cipher_suite_size * *ptr;
-		ptr += 1 + akm_suite_size * *ptr;
-		mfpr = *ptr & BIT(6);
-		mfpc = *ptr & BIT(7);
-	}
-	rcu_read_unlock();
-
-	hif_set_mfp(wvif, mfpc, mfpr);
-}
-
 void wfx_reset(struct wfx_vif *wvif)
 {
 	struct wfx_dev *wdev = wvif->wdev;
@@ -400,7 +370,6 @@ static void wfx_do_join(struct wfx_vif *wvif)
 	}
 	rcu_read_unlock();
 
-	wfx_set_mfp(wvif, bss);
 	cfg80211_put_bss(wvif->wdev->hw->wiphy, bss);
 
 	wvif->join_in_progress = true;
@@ -427,6 +396,9 @@ int wfx_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 
 	sta_priv->vif_id = wvif->id;
 
+	if (vif->type == NL80211_IFTYPE_STATION)
+		hif_set_mfp(wvif, sta->mfp, sta->mfp);
+
 	// In station mode, the firmware interprets new link-id as a TDLS peer.
 	if (vif->type == NL80211_IFTYPE_STATION && !sta->tdls)
 		return 0;
@@ -434,7 +406,7 @@ int wfx_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	wvif->link_id_map |= BIT(sta_priv->link_id);
 	WARN_ON(!sta_priv->link_id);
 	WARN_ON(sta_priv->link_id >= HIF_LINK_ID_MAX);
-	hif_map_link(wvif, sta->addr, 0, sta_priv->link_id);
+	hif_map_link(wvif, false, sta->addr, sta_priv->link_id, sta->mfp);
 
 	return 0;
 }
@@ -449,7 +421,7 @@ int wfx_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	if (!sta_priv->link_id)
 		return 0;
 	// FIXME add a mutex?
-	hif_map_link(wvif, sta->addr, 1, sta_priv->link_id);
+	hif_map_link(wvif, true, sta->addr, sta_priv->link_id, false);
 	wvif->link_id_map &= ~BIT(sta_priv->link_id);
 	return 0;
 }
@@ -474,6 +446,31 @@ static int wfx_upload_ap_templates(struct wfx_vif *wvif)
 	return 0;
 }
 
+static void wfx_set_mfp_ap(struct wfx_vif *wvif)
+{
+	struct sk_buff *skb = ieee80211_beacon_get(wvif->wdev->hw, wvif->vif);
+	const int ieoffset = offsetof(struct ieee80211_mgmt, u.beacon.variable);
+	const u16 *ptr = (u16 *)cfg80211_find_ie(WLAN_EID_RSN,
+						 skb->data + ieoffset,
+						 skb->len - ieoffset);
+	const int pairwise_cipher_suite_count_offset = 8 / sizeof(u16);
+	const int pairwise_cipher_suite_size = 4 / sizeof(u16);
+	const int akm_suite_size = 4 / sizeof(u16);
+
+	if (ptr) {
+		ptr += pairwise_cipher_suite_count_offset;
+		if (WARN_ON(ptr > (u16 *)skb_tail_pointer(skb)))
+			return;
+		ptr += 1 + pairwise_cipher_suite_size * *ptr;
+		if (WARN_ON(ptr > (u16 *)skb_tail_pointer(skb)))
+			return;
+		ptr += 1 + akm_suite_size * *ptr;
+		if (WARN_ON(ptr > (u16 *)skb_tail_pointer(skb)))
+			return;
+		hif_set_mfp(wvif, *ptr & BIT(7), *ptr & BIT(6));
+	}
+}
+
 int wfx_start_ap(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 {
 	struct wfx_vif *wvif = (struct wfx_vif *)vif->drv_priv;
@@ -488,6 +485,7 @@ int wfx_start_ap(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	ret = hif_start(wvif, &vif->bss_conf, wvif->channel);
 	if (ret > 0)
 		return -EIO;
+	wfx_set_mfp_ap(wvif);
 	return ret;
 }
 
@@ -682,15 +680,16 @@ int wfx_ampdu_action(struct ieee80211_hw *hw,
 		     struct ieee80211_vif *vif,
 		     struct ieee80211_ampdu_params *params)
 {
-	/* Aggregation is implemented fully in firmware,
-	 * including block ack negotiation. Do not allow
-	 * mac80211 stack to do anything: it interferes with
-	 * the firmware.
-	 */
-
-	/* Note that we still need this function stubbed. */
-
-	return -ENOTSUPP;
+	// Aggregation is implemented fully in firmware
+	switch (params->action) {
+	case IEEE80211_AMPDU_RX_START:
+	case IEEE80211_AMPDU_RX_STOP:
+		// Just acknowledge it to enable frame re-ordering
+		return 0;
+	default:
+		// Leave the firmware doing its business for tx aggregation
+		return -ENOTSUPP;
+	}
 }
 
 int wfx_add_chanctx(struct ieee80211_hw *hw,
@@ -760,17 +759,6 @@ int wfx_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 		return -EOPNOTSUPP;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(wdev->vif); i++) {
-		if (!wdev->vif[i]) {
-			wdev->vif[i] = vif;
-			wvif->id = i;
-			break;
-		}
-	}
-	if (i == ARRAY_SIZE(wdev->vif)) {
-		mutex_unlock(&wdev->conf_mutex);
-		return -EOPNOTSUPP;
-	}
 	// FIXME: prefer use of container_of() to get vif
 	wvif->vif = vif;
 	wvif->wdev = wdev;
@@ -787,12 +775,22 @@ int wfx_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	init_completion(&wvif->scan_complete);
 	INIT_WORK(&wvif->scan_work, wfx_hw_scan_work);
 
-	mutex_unlock(&wdev->conf_mutex);
+	wfx_tx_queues_init(wvif);
+	wfx_tx_policy_init(wvif);
+
+	for (i = 0; i < ARRAY_SIZE(wdev->vif); i++) {
+		if (!wdev->vif[i]) {
+			wdev->vif[i] = vif;
+			wvif->id = i;
+			break;
+		}
+	}
+	WARN(i == ARRAY_SIZE(wdev->vif), "try to instantiate more vif than supported");
 
 	hif_set_macaddr(wvif, vif->addr);
 
-	wfx_tx_queues_init(wvif);
-	wfx_tx_policy_init(wvif);
+	mutex_unlock(&wdev->conf_mutex);
+
 	wvif = NULL;
 	while ((wvif = wvif_iterate(wdev, wvif)) != NULL) {
 		// Combo mode does not support Block Acks. We can re-enable them
@@ -824,6 +822,7 @@ void wfx_remove_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	wvif->vif = NULL;
 
 	mutex_unlock(&wdev->conf_mutex);
+
 	wvif = NULL;
 	while ((wvif = wvif_iterate(wdev, wvif)) != NULL) {
 		// Combo mode does not support Block Acks. We can re-enable them
