@@ -518,8 +518,8 @@ config DEBUG_FS_ALLOW_NONE
 endchoice
 
 source "lib/Kconfig.kgdb"
-
 source "lib/Kconfig.ubsan"
+source "lib/Kconfig.kcsan"
 
 endmenu
 
@@ -1639,8 +1639,6 @@ config PROVIDE_OHCI1394_DMA_INIT
 
 source "samples/Kconfig"
 
-source "lib/Kconfig.kcsan"
-
 config ARCH_HAS_DEVMEM_IS_ALLOWED
 	bool
 
@@ -1681,6 +1679,12 @@ config IO_STRICT_DEVMEM
 	  If in doubt, say Y.
 
 menu "$(SRCARCH) Debugging"
+
+config DEBUG_AID_FOR_SYZBOT
+       bool "Additional debug code for syzbot"
+       default n
+       help
+         This option is intended for testing by syzbot.
 
 source "arch/$(SRCARCH)/Kconfig.debug"
 
@@ -1788,6 +1792,13 @@ config FAIL_PAGE_ALLOC
 	depends on FAULT_INJECTION
 	help
 	  Provide fault-injection capability for alloc_pages().
+
+config FAULT_INJECTION_USERCOPY
+	bool "Fault injection capability for usercopy functions"
+	depends on FAULT_INJECTION
+	help
+	  Provides fault-injection capability to inject failures
+	  in usercopy functions (copy_from_user(), get_user(), ...).
 
 config FAIL_MAKE_REQUEST
 	bool "Fault-injection capability for disk IO"
