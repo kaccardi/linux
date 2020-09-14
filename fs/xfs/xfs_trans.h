@@ -70,10 +70,12 @@ struct xfs_item_ops {
 	void (*iop_format)(struct xfs_log_item *, struct xfs_log_vec *);
 	void (*iop_pin)(struct xfs_log_item *);
 	void (*iop_unpin)(struct xfs_log_item *, int remove);
-	uint (*iop_push)(struct xfs_log_item *, struct list_head *);
+	uint64_t (*iop_sort)(struct xfs_log_item *);
+	int (*iop_precommit)(struct xfs_trans *, struct xfs_log_item *);
 	void (*iop_committing)(struct xfs_log_item *, xfs_lsn_t commit_lsn);
-	void (*iop_release)(struct xfs_log_item *);
 	xfs_lsn_t (*iop_committed)(struct xfs_log_item *, xfs_lsn_t);
+	uint (*iop_push)(struct xfs_log_item *, struct list_head *);
+	void (*iop_release)(struct xfs_log_item *);
 	int (*iop_recover)(struct xfs_log_item *lip, struct xfs_trans *tp);
 	bool (*iop_match)(struct xfs_log_item *item, uint64_t id);
 };
@@ -209,7 +211,7 @@ xfs_trans_read_buf(
 				      flags, bpp, ops);
 }
 
-struct xfs_buf	*xfs_trans_getsb(xfs_trans_t *, struct xfs_mount *);
+struct xfs_buf	*xfs_trans_getsb(struct xfs_trans *);
 
 void		xfs_trans_brelse(xfs_trans_t *, struct xfs_buf *);
 void		xfs_trans_bjoin(xfs_trans_t *, struct xfs_buf *);

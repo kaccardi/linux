@@ -52,7 +52,6 @@ xfs_inode_alloc(
 
 	XFS_STATS_INC(mp, vn_active);
 	ASSERT(atomic_read(&ip->i_pincount) == 0);
-	ASSERT(!xfs_isiflocked(ip));
 	ASSERT(ip->i_ino == 0);
 
 	/* initialise the xfs inode */
@@ -67,6 +66,7 @@ xfs_inode_alloc(
 	memset(&ip->i_d, 0, sizeof(ip->i_d));
 	ip->i_sick = 0;
 	ip->i_checked = 0;
+	INIT_LIST_HEAD(&ip->i_unlink);
 	INIT_WORK(&ip->i_ioend_work, xfs_end_io);
 	INIT_LIST_HEAD(&ip->i_ioend_list);
 	spin_lock_init(&ip->i_ioend_lock);
@@ -123,7 +123,7 @@ void
 xfs_inode_free(
 	struct xfs_inode	*ip)
 {
-	ASSERT(!xfs_isiflocked(ip));
+	ASSERT(!xfs_iflags_test(ip, XFS_IFLUSHING));
 
 	/*
 	 * Because we use RCU freeing we need to ensure the inode always
@@ -1035,23 +1035,21 @@ xfs_reclaim_inode(
 
 	if (!xfs_ilock_nowait(ip, XFS_ILOCK_EXCL))
 		goto out;
-	if (!xfs_iflock_nowait(ip))
+	if (xfs_iflags_test_and_set(ip, XFS_IFLUSHING))
 		goto out_iunlock;
 
 	if (XFS_FORCED_SHUTDOWN(ip->i_mount)) {
 		xfs_iunpin_wait(ip);
-		/* xfs_iflush_abort() drops the flush lock */
 		xfs_iflush_abort(ip);
 		goto reclaim;
 	}
 	if (xfs_ipincount(ip))
-		goto out_ifunlock;
+		goto out_clear_flush;
 	if (!xfs_inode_clean(ip))
-		goto out_ifunlock;
+		goto out_clear_flush;
 
-	xfs_ifunlock(ip);
+	xfs_iflags_clear(ip, XFS_IFLUSHING);
 reclaim:
-	ASSERT(!xfs_isiflocked(ip));
 
 	/*
 	 * Because we use RCU freeing we need to ensure the inode always appears
@@ -1068,6 +1066,7 @@ reclaim:
 	ip->i_ino = 0;
 	spin_unlock(&ip->i_flags_lock);
 
+	ASSERT(!ip->i_itemp || ip->i_itemp->ili_item.li_buf == NULL);
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 
 	XFS_STATS_INC(ip->i_mount, xs_ig_reclaims);
@@ -1101,8 +1100,8 @@ reclaim:
 	__xfs_inode_free(ip);
 	return;
 
-out_ifunlock:
-	xfs_ifunlock(ip);
+out_clear_flush:
+	xfs_iflags_clear(ip, XFS_IFLUSHING);
 out_iunlock:
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 out:
@@ -1211,7 +1210,7 @@ xfs_reclaim_inodes(
 	while (radix_tree_tagged(&mp->m_perag_tree, XFS_ICI_RECLAIM_TAG)) {
 		xfs_ail_push_all_sync(mp->m_ail);
 		xfs_reclaim_inodes_ag(mp, &nr_to_scan);
-	};
+	}
 }
 
 /*
