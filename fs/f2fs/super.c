@@ -146,6 +146,7 @@ enum {
 	Opt_compress_algorithm,
 	Opt_compress_log_size,
 	Opt_compress_extension,
+	Opt_atgc,
 	Opt_err,
 };
 
@@ -213,6 +214,7 @@ static match_table_t f2fs_tokens = {
 	{Opt_compress_algorithm, "compress_algorithm=%s"},
 	{Opt_compress_log_size, "compress_log_size=%u"},
 	{Opt_compress_extension, "compress_extension=%s"},
+	{Opt_atgc, "atgc"},
 	{Opt_err, NULL},
 };
 
@@ -580,7 +582,8 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 		case Opt_active_logs:
 			if (args->from && match_int(args, &arg))
 				return -EINVAL;
-			if (arg != 2 && arg != 4 && arg != NR_CURSEG_TYPE)
+			if (arg != 2 && arg != 4 &&
+				arg != NR_CURSEG_PERSIST_TYPE)
 				return -EINVAL;
 			F2FS_OPTION(sbi).active_logs = arg;
 			break;
@@ -868,8 +871,8 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 #ifdef CONFIG_F2FS_FS_COMPRESSION
 		case Opt_compress_algorithm:
 			if (!f2fs_sb_has_compression(sbi)) {
-				f2fs_err(sbi, "Compression feature if off");
-				return -EINVAL;
+				f2fs_info(sbi, "Image doesn't support compression");
+				break;
 			}
 			name = match_strdup(&args[0]);
 			if (!name)
@@ -894,8 +897,8 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			break;
 		case Opt_compress_log_size:
 			if (!f2fs_sb_has_compression(sbi)) {
-				f2fs_err(sbi, "Compression feature is off");
-				return -EINVAL;
+				f2fs_info(sbi, "Image doesn't support compression");
+				break;
 			}
 			if (args->from && match_int(args, &arg))
 				return -EINVAL;
@@ -909,8 +912,8 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			break;
 		case Opt_compress_extension:
 			if (!f2fs_sb_has_compression(sbi)) {
-				f2fs_err(sbi, "Compression feature is off");
-				return -EINVAL;
+				f2fs_info(sbi, "Image doesn't support compression");
+				break;
 			}
 			name = match_strdup(&args[0]);
 			if (!name)
@@ -938,6 +941,9 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			f2fs_info(sbi, "compression options not supported");
 			break;
 #endif
+		case Opt_atgc:
+			set_opt(sbi, ATGC);
+			break;
 		default:
 			f2fs_err(sbi, "Unrecognized mount option \"%s\" or missing value",
 				 p);
@@ -1001,7 +1007,7 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 	}
 
 	/* Not pass down write hints if the number of active logs is lesser
-	 * than NR_CURSEG_TYPE.
+	 * than NR_CURSEG_PERSIST_TYPE.
 	 */
 	if (F2FS_OPTION(sbi).active_logs != NR_CURSEG_TYPE)
 		F2FS_OPTION(sbi).whint_mode = WHINT_MODE_OFF;
@@ -1020,6 +1026,7 @@ static struct inode *f2fs_alloc_inode(struct super_block *sb)
 
 	/* Initialize f2fs-specific inode info */
 	atomic_set(&fi->dirty_pages, 0);
+	atomic_set(&fi->i_compr_blocks, 0);
 	init_rwsem(&fi->i_sem);
 	spin_lock_init(&fi->i_size_lock);
 	INIT_LIST_HEAD(&fi->dirty_list);
@@ -1184,6 +1191,7 @@ static void destroy_device_list(struct f2fs_sb_info *sbi)
 		blkdev_put(FDEV(i).bdev, FMODE_EXCL);
 #ifdef CONFIG_BLK_DEV_ZONED
 		kvfree(FDEV(i).blkz_seq);
+		kfree(FDEV(i).zone_capacity_blocks);
 #endif
 	}
 	kvfree(sbi->devs);
@@ -1280,7 +1288,7 @@ static void f2fs_put_super(struct super_block *sb)
 	for (i = 0; i < NR_PAGE_TYPE; i++)
 		kvfree(sbi->write_io[i]);
 #ifdef CONFIG_UNICODE
-	utf8_unload(sbi->s_encoding);
+	utf8_unload(sb->s_encoding);
 #endif
 	kfree(sbi);
 }
@@ -1634,13 +1642,16 @@ static int f2fs_show_options(struct seq_file *seq, struct dentry *root)
 #ifdef CONFIG_F2FS_FS_COMPRESSION
 	f2fs_show_compress_options(seq, sbi->sb);
 #endif
+
+	if (test_opt(sbi, ATGC))
+		seq_puts(seq, ",atgc");
 	return 0;
 }
 
 static void default_options(struct f2fs_sb_info *sbi)
 {
 	/* init some FS parameters */
-	F2FS_OPTION(sbi).active_logs = NR_CURSEG_TYPE;
+	F2FS_OPTION(sbi).active_logs = NR_CURSEG_PERSIST_TYPE;
 	F2FS_OPTION(sbi).inline_xattr_size = DEFAULT_INLINE_XATTR_ADDRS;
 	F2FS_OPTION(sbi).whint_mode = WHINT_MODE_OFF;
 	F2FS_OPTION(sbi).alloc_mode = ALLOC_MODE_DEFAULT;
@@ -1763,6 +1774,7 @@ static int f2fs_remount(struct super_block *sb, int *flags, char *data)
 	bool no_extent_cache = !test_opt(sbi, EXTENT_CACHE);
 	bool disable_checkpoint = test_opt(sbi, DISABLE_CHECKPOINT);
 	bool no_io_align = !F2FS_IO_ALIGNED(sbi);
+	bool no_atgc = !test_opt(sbi, ATGC);
 	bool checkpoint_changed;
 #ifdef CONFIG_QUOTA
 	int i, j;
@@ -1835,6 +1847,13 @@ static int f2fs_remount(struct super_block *sb, int *flags, char *data)
 		}
 	}
 #endif
+	/* disallow enable atgc dynamically */
+	if (no_atgc == !!test_opt(sbi, ATGC)) {
+		err = -EINVAL;
+		f2fs_warn(sbi, "switch atgc option is not allowed");
+		goto restore_opts;
+	}
+
 	/* disallow enable/disable extent_cache dynamically */
 	if (no_extent_cache == !!test_opt(sbi, EXTENT_CACHE)) {
 		err = -EINVAL;
@@ -2995,7 +3014,7 @@ int f2fs_sanity_check_ckpt(struct f2fs_sb_info *sbi)
 	cp_payload = __cp_payload(sbi);
 	if (cp_pack_start_sum < cp_payload + 1 ||
 		cp_pack_start_sum > blocks_per_seg - 1 -
-			NR_CURSEG_TYPE) {
+			NR_CURSEG_PERSIST_TYPE) {
 		f2fs_err(sbi, "Wrong cp_pack_start_sum: %u",
 			 cp_pack_start_sum);
 		return 1;
@@ -3088,13 +3107,26 @@ static int init_percpu_info(struct f2fs_sb_info *sbi)
 }
 
 #ifdef CONFIG_BLK_DEV_ZONED
-static int f2fs_report_zone_cb(struct blk_zone *zone, unsigned int idx,
-			       void *data)
-{
-	struct f2fs_dev_info *dev = data;
 
-	if (zone->type != BLK_ZONE_TYPE_CONVENTIONAL)
-		set_bit(idx, dev->blkz_seq);
+struct f2fs_report_zones_args {
+	struct f2fs_dev_info *dev;
+	bool zone_cap_mismatch;
+};
+
+static int f2fs_report_zone_cb(struct blk_zone *zone, unsigned int idx,
+			      void *data)
+{
+	struct f2fs_report_zones_args *rz_args = data;
+
+	if (zone->type == BLK_ZONE_TYPE_CONVENTIONAL)
+		return 0;
+
+	set_bit(idx, rz_args->dev->blkz_seq);
+	rz_args->dev->zone_capacity_blocks[idx] = zone->capacity >>
+						F2FS_LOG_SECTORS_PER_BLOCK;
+	if (zone->len != zone->capacity && !rz_args->zone_cap_mismatch)
+		rz_args->zone_cap_mismatch = true;
+
 	return 0;
 }
 
@@ -3102,6 +3134,7 @@ static int init_blkz_info(struct f2fs_sb_info *sbi, int devi)
 {
 	struct block_device *bdev = FDEV(devi).bdev;
 	sector_t nr_sectors = bdev->bd_part->nr_sects;
+	struct f2fs_report_zones_args rep_zone_arg;
 	int ret;
 
 	if (!f2fs_sb_has_blkzoned(sbi))
@@ -3127,11 +3160,25 @@ static int init_blkz_info(struct f2fs_sb_info *sbi, int devi)
 	if (!FDEV(devi).blkz_seq)
 		return -ENOMEM;
 
-	/* Get block zones type */
+	/* Get block zones type and zone-capacity */
+	FDEV(devi).zone_capacity_blocks = f2fs_kzalloc(sbi,
+					FDEV(devi).nr_blkz * sizeof(block_t),
+					GFP_KERNEL);
+	if (!FDEV(devi).zone_capacity_blocks)
+		return -ENOMEM;
+
+	rep_zone_arg.dev = &FDEV(devi);
+	rep_zone_arg.zone_cap_mismatch = false;
+
 	ret = blkdev_report_zones(bdev, 0, BLK_ALL_ZONES, f2fs_report_zone_cb,
-				  &FDEV(devi));
+				  &rep_zone_arg);
 	if (ret < 0)
 		return ret;
+
+	if (!rep_zone_arg.zone_cap_mismatch) {
+		kfree(FDEV(devi).zone_capacity_blocks);
+		FDEV(devi).zone_capacity_blocks = NULL;
+	}
 
 	return 0;
 }
@@ -3329,7 +3376,7 @@ static int f2fs_scan_devices(struct f2fs_sb_info *sbi)
 static int f2fs_setup_casefold(struct f2fs_sb_info *sbi)
 {
 #ifdef CONFIG_UNICODE
-	if (f2fs_sb_has_casefold(sbi) && !sbi->s_encoding) {
+	if (f2fs_sb_has_casefold(sbi) && !sbi->sb->s_encoding) {
 		const struct f2fs_sb_encodings *encoding_info;
 		struct unicode_map *encoding;
 		__u16 encoding_flags;
@@ -3360,8 +3407,8 @@ static int f2fs_setup_casefold(struct f2fs_sb_info *sbi)
 			 "%s-%s with flags 0x%hx", encoding_info->name,
 			 encoding_info->version?:"\b", encoding_flags);
 
-		sbi->s_encoding = encoding;
-		sbi->s_encoding_flags = encoding_flags;
+		sbi->sb->s_encoding = encoding;
+		sbi->sb->s_encoding_flags = encoding_flags;
 		sbi->sb->s_d_op = &f2fs_dentry_ops;
 	}
 #else
@@ -3762,6 +3809,8 @@ try_onemore:
 	}
 
 reset_checkpoint:
+	f2fs_init_inmem_curseg(sbi);
+
 	/* f2fs_recover_fsync_data() cleared this already */
 	clear_sbi_flag(sbi, SBI_POR_DOING);
 
@@ -3857,7 +3906,7 @@ free_bio_info:
 		kvfree(sbi->write_io[i]);
 
 #ifdef CONFIG_UNICODE
-	utf8_unload(sbi->s_encoding);
+	utf8_unload(sb->s_encoding);
 #endif
 free_options:
 #ifdef CONFIG_QUOTA
@@ -3967,9 +4016,12 @@ static int __init init_f2fs_fs(void)
 	err = f2fs_create_extent_cache();
 	if (err)
 		goto free_checkpoint_caches;
-	err = f2fs_init_sysfs();
+	err = f2fs_create_garbage_collection_cache();
 	if (err)
 		goto free_extent_cache;
+	err = f2fs_init_sysfs();
+	if (err)
+		goto free_garbage_collection_cache;
 	err = register_shrinker(&f2fs_shrinker_info);
 	if (err)
 		goto free_sysfs;
@@ -4003,6 +4055,8 @@ free_shrinker:
 	unregister_shrinker(&f2fs_shrinker_info);
 free_sysfs:
 	f2fs_exit_sysfs();
+free_garbage_collection_cache:
+	f2fs_destroy_garbage_collection_cache();
 free_extent_cache:
 	f2fs_destroy_extent_cache();
 free_checkpoint_caches:
@@ -4027,6 +4081,7 @@ static void __exit exit_f2fs_fs(void)
 	unregister_filesystem(&f2fs_fs_type);
 	unregister_shrinker(&f2fs_shrinker_info);
 	f2fs_exit_sysfs();
+	f2fs_destroy_garbage_collection_cache();
 	f2fs_destroy_extent_cache();
 	f2fs_destroy_checkpoint_caches();
 	f2fs_destroy_segment_manager_caches();
