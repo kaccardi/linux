@@ -1695,7 +1695,7 @@ static int spi_imx_probe(struct platform_device *pdev)
 			goto out_runtime_pm_put;
 
 		if (ret < 0)
-			dev_err(&pdev->dev, "dma setup error %d, use pio\n",
+			dev_dbg(&pdev->dev, "dma setup error %d, use pio\n",
 				ret);
 	}
 
@@ -1709,8 +1709,6 @@ static int spi_imx_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "bitbang start failed with %d\n", ret);
 		goto out_runtime_pm_put;
 	}
-
-	dev_info(&pdev->dev, "probed\n");
 
 	pm_runtime_mark_last_busy(spi_imx->dev);
 	pm_runtime_put_autosuspend(spi_imx->dev);
