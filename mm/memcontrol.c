@@ -6383,6 +6383,84 @@ static int memory_stat_show(struct seq_file *m, void *v)
 	return 0;
 }
 
+#ifdef CONFIG_NUMA
+static unsigned long memcg_node_page_state(struct mem_cgroup *memcg,
+					   unsigned int nid,
+					   enum node_stat_item idx)
+{
+	VM_BUG_ON(nid >= nr_node_ids);
+	return lruvec_page_state(mem_cgroup_lruvec(memcg, NODE_DATA(nid)), idx);
+}
+
+static const char *memory_numa_stat_format(struct mem_cgroup *memcg)
+{
+	struct numa_stat {
+		const char *name;
+		unsigned int ratio;
+		enum node_stat_item idx;
+	};
+
+	static const struct numa_stat stats[] = {
+		{ "anno", PAGE_SIZE, NR_ANON_MAPPED },
+		{ "file", PAGE_SIZE, NR_FILE_PAGES },
+		{ "kernel_stack", 1024, NR_KERNEL_STACK_KB },
+		{ "shmem", PAGE_SIZE, NR_SHMEM },
+		{ "file_mapped", PAGE_SIZE, NR_FILE_MAPPED },
+		{ "file_dirty", PAGE_SIZE, NR_FILE_DIRTY },
+		{ "file_writeback", PAGE_SIZE, NR_WRITEBACK },
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+		{ "anon_thp", HPAGE_PMD_SIZE, NR_ANON_THPS },
+#endif
+		{ "inactive_anon", PAGE_SIZE, NR_INACTIVE_ANON },
+		{ "active_anon", PAGE_SIZE, NR_ACTIVE_ANON },
+		{ "inactive_file", PAGE_SIZE, NR_INACTIVE_FILE },
+		{ "active_file", PAGE_SIZE, NR_ACTIVE_FILE },
+		{ "unevictable", PAGE_SIZE, NR_UNEVICTABLE },
+		{ "slab_reclaimable", 1, NR_SLAB_RECLAIMABLE_B },
+		{ "slab_unreclaimable", 1, NR_SLAB_UNRECLAIMABLE_B },
+	};
+
+	int i, nid;
+	struct seq_buf s;
+
+	/* Reserve a byte for the trailing null */
+	seq_buf_init(&s, kmalloc(PAGE_SIZE, GFP_KERNEL), PAGE_SIZE - 1);
+	if (!s.buffer)
+		return NULL;
+
+	for (i = 0; i < ARRAY_SIZE(stats); i++) {
+		seq_buf_printf(&s, "%s", stats[i].name);
+		for_each_node_state(nid, N_MEMORY) {
+			u64 size;
+
+			size = memcg_node_page_state(memcg, nid, stats[i].idx);
+			size *= stats[i].ratio;
+			seq_buf_printf(&s, " N%d=%llu", nid, size);
+		}
+		seq_buf_putc(&s, '\n');
+	}
+
+	/* The above should easily fit into one page */
+	if (WARN_ON_ONCE(seq_buf_putc(&s, '\0')))
+		s.buffer[PAGE_SIZE - 1] = '\0';
+
+	return s.buffer;
+}
+
+static int memory_numa_stat_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+	const char *buf;
+
+	buf = memory_numa_stat_format(memcg);
+	if (!buf)
+		return -ENOMEM;
+	seq_puts(m, buf);
+	kfree(buf);
+	return 0;
+}
+#endif
+
 static int memory_oom_group_show(struct seq_file *m, void *v)
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
@@ -6492,6 +6570,12 @@ static struct cftype memory_files[] = {
 		.name = "stat",
 		.seq_show = memory_stat_show,
 	},
+#ifdef CONFIG_NUMA
+	{
+		.name = "numa_stat",
+		.seq_show = memory_numa_stat_show,
+	},
+#endif
 	{
 		.name = "oom.group",
 		.flags = CFTYPE_NOT_ON_ROOT | CFTYPE_NS_DELEGATABLE,
