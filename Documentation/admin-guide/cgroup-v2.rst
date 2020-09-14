@@ -1181,6 +1181,15 @@ PAGE_SIZE multiple when read back.
 	high limit is used and monitored properly, this limit's
 	utility is limited to providing the final safety net.
 
+  memory.reclaim
+	A write-only file which exists on non-root cgroups.
+
+	This is a simple interface to trigger memory reclaim in the
+	target cgroup. Write the number of bytes to reclaim to this
+	file and the kernel will try to reclaim that much memory.
+	Please note that the kernel can over or under reclaim from
+	the target cgroup.
+
   memory.oom.group
 	A read-write single value file which exists on non-root
 	cgroups.  The default value is "0".
