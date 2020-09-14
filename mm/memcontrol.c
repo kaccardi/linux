@@ -6384,6 +6384,52 @@ static int memory_stat_show(struct seq_file *m, void *v)
 }
 
 #ifdef CONFIG_NUMA
+struct numa_stat {
+	const char *name;
+	unsigned int ratio;
+	enum node_stat_item idx;
+};
+
+static struct numa_stat numa_stats[] = {
+	{ "anon", PAGE_SIZE, NR_ANON_MAPPED },
+	{ "file", PAGE_SIZE, NR_FILE_PAGES },
+	{ "kernel_stack", 1024, NR_KERNEL_STACK_KB },
+	{ "shmem", PAGE_SIZE, NR_SHMEM },
+	{ "file_mapped", PAGE_SIZE, NR_FILE_MAPPED },
+	{ "file_dirty", PAGE_SIZE, NR_FILE_DIRTY },
+	{ "file_writeback", PAGE_SIZE, NR_WRITEBACK },
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+	/*
+	 * The ratio will be initialized in numa_stats_init(). Because
+	 * on some architectures, the macro of HPAGE_PMD_SIZE is not
+	 * constant(e.g. powerpc).
+	 */
+	{ "anon_thp", 0, NR_ANON_THPS },
+#endif
+	{ "inactive_anon", PAGE_SIZE, NR_INACTIVE_ANON },
+	{ "active_anon", PAGE_SIZE, NR_ACTIVE_ANON },
+	{ "inactive_file", PAGE_SIZE, NR_INACTIVE_FILE },
+	{ "active_file", PAGE_SIZE, NR_ACTIVE_FILE },
+	{ "unevictable", PAGE_SIZE, NR_UNEVICTABLE },
+	{ "slab_reclaimable", 1, NR_SLAB_RECLAIMABLE_B },
+	{ "slab_unreclaimable", 1, NR_SLAB_UNRECLAIMABLE_B },
+};
+
+static int __init numa_stats_init(void)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(numa_stats); i++) {
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+		if (numa_stats[i].idx == NR_ANON_THPS)
+			numa_stats[i].ratio = HPAGE_PMD_SIZE;
+#endif
+	}
+
+	return 0;
+}
+pure_initcall(numa_stats_init);
+
 static unsigned long memcg_node_page_state(struct mem_cgroup *memcg,
 					   unsigned int nid,
 					   enum node_stat_item idx)
@@ -6394,33 +6440,7 @@ static unsigned long memcg_node_page_state(struct mem_cgroup *memcg,
 
 static const char *memory_numa_stat_format(struct mem_cgroup *memcg)
 {
-	struct numa_stat {
-		const char *name;
-		unsigned int ratio;
-		enum node_stat_item idx;
-	};
-
-	static const struct numa_stat stats[] = {
-		{ "anno", PAGE_SIZE, NR_ANON_MAPPED },
-		{ "file", PAGE_SIZE, NR_FILE_PAGES },
-		{ "kernel_stack", 1024, NR_KERNEL_STACK_KB },
-		{ "shmem", PAGE_SIZE, NR_SHMEM },
-		{ "file_mapped", PAGE_SIZE, NR_FILE_MAPPED },
-		{ "file_dirty", PAGE_SIZE, NR_FILE_DIRTY },
-		{ "file_writeback", PAGE_SIZE, NR_WRITEBACK },
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-		{ "anon_thp", HPAGE_PMD_SIZE, NR_ANON_THPS },
-#endif
-		{ "inactive_anon", PAGE_SIZE, NR_INACTIVE_ANON },
-		{ "active_anon", PAGE_SIZE, NR_ACTIVE_ANON },
-		{ "inactive_file", PAGE_SIZE, NR_INACTIVE_FILE },
-		{ "active_file", PAGE_SIZE, NR_ACTIVE_FILE },
-		{ "unevictable", PAGE_SIZE, NR_UNEVICTABLE },
-		{ "slab_reclaimable", 1, NR_SLAB_RECLAIMABLE_B },
-		{ "slab_unreclaimable", 1, NR_SLAB_UNRECLAIMABLE_B },
-	};
-
-	int i, nid;
+	int i;
 	struct seq_buf s;
 
 	/* Reserve a byte for the trailing null */
@@ -6428,13 +6448,16 @@ static const char *memory_numa_stat_format(struct mem_cgroup *memcg)
 	if (!s.buffer)
 		return NULL;
 
-	for (i = 0; i < ARRAY_SIZE(stats); i++) {
-		seq_buf_printf(&s, "%s", stats[i].name);
+	for (i = 0; i < ARRAY_SIZE(numa_stats); i++) {
+		int nid;
+
+		seq_buf_printf(&s, "%s", numa_stats[i].name);
 		for_each_node_state(nid, N_MEMORY) {
 			u64 size;
 
-			size = memcg_node_page_state(memcg, nid, stats[i].idx);
-			size *= stats[i].ratio;
+			size = memcg_node_page_state(memcg, nid,
+						     numa_stats[i].idx);
+			size *= numa_stats[i].ratio;
 			seq_buf_printf(&s, " N%d=%llu", nid, size);
 		}
 		seq_buf_putc(&s, '\n');
